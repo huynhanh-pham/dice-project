@@ -1,0 +1,9 @@
+# Build files.
+/build*/
+
+# Gradle-generated files.
+.gradle/
+
+# Vim swap files.
+.sw*
+.*.sw*

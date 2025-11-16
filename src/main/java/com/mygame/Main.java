@@ -3,6 +3,15 @@ package com.mygame;
 /**
  * @author thuph
  * @author Jonathan Gruber */
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+
 import com.jme3.app.SimpleApplication;
 
 import com.jme3.bullet.BulletAppState;
@@ -13,6 +22,7 @@ import com.jme3.bullet.control.RigidBodyControl;
 
 import com.jme3.bullet.util.CollisionShapeFactory;
 
+import com.jme3.font.BitmapFont;
 import com.jme3.font.BitmapText;
 
 import com.jme3.input.KeyInput;
@@ -35,6 +45,7 @@ import com.jme3.math.Vector3f;
 import com.jme3.renderer.queue.RenderQueue;
 
 import com.jme3.scene.Geometry;
+import com.jme3.scene.Node;
 import com.jme3.scene.Spatial;
 
 import com.jme3.scene.shape.Box;
@@ -43,13 +54,7 @@ import com.jme3.scene.shape.Quad;
 import com.jme3.shadow.DirectionalLightShadowRenderer;
 import com.jme3.shadow.SpotLightShadowRenderer;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
-
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
+import com.jme3.system.AppSettings;
 
 public class Main extends SimpleApplication {
 	private static final float GROUND_SIZE = 20;
@@ -77,7 +82,13 @@ public class Main extends SimpleApplication {
 	private float settleTimer;
 
 	public static void main(final String[] args) {
+		final AppSettings settings = new AppSettings(true);
+		final String windowTitle = "Dice-Rolling Simulator";
+		settings.setTitle(windowTitle);
+		settings.setResizable(true);
+
 		final Main app = new Main();
+		app.setSettings(settings);
 		app.setShowSettings(false);
 		app.start();
 	}
@@ -107,7 +118,7 @@ public class Main extends SimpleApplication {
 	@Override
 	public void simpleUpdate(final float tpf) {
 		this.simpleUpdateImpl(tpf);
-		this.updateHudText();
+		this.updateHud();
 	}
 
 	private void simpleUpdateImpl(final float tpf) {
@@ -178,11 +189,6 @@ public class Main extends SimpleApplication {
 	}
 
 	private void setupGround() {
-		final Geometry ground =
-			new Geometry("ground", new Quad(GROUND_SIZE, GROUND_SIZE));
-		ground.rotate(-FastMath.HALF_PI, 0, 0);
-		ground.setLocalTranslation(-GROUND_SIZE / 2, 0, GROUND_SIZE / 2);
-
 		final ColorRGBA groundDiffuseColor =
 			new ColorRGBA(0.90f, 0.92f, 0.95f, 1);
 		final ColorRGBA groundSpecularColor = ColorRGBA.White;
@@ -198,7 +204,14 @@ public class Main extends SimpleApplication {
 		groundMat.setColor("Diffuse", groundDiffuseColor);
 		groundMat.setColor("Specular", groundSpecularColor);
 		groundMat.setFloat("Shininess", groundShininess);
-		ground.setMaterial(groundMat);
+
+		final Geometry ground = new Geometry(
+			"ground",
+			new Quad(GROUND_SIZE, GROUND_SIZE),
+			groundMat
+		);
+		ground.rotate(-FastMath.HALF_PI, 0, 0);
+		ground.setLocalTranslation(-GROUND_SIZE / 2, 0, GROUND_SIZE / 2);
 		ground.setShadowMode(groundShadowMode);
 
 		this.rootNode.attachChild(ground);
@@ -214,7 +227,7 @@ public class Main extends SimpleApplication {
 		final float wallShininess = 16f;
 
 		final Material wallMat = new Material(
-			assetManager,
+			this.assetManager,
 			"Common/MatDefs/Light/Lighting.j3md"
 		);
 		wallMat.setBoolean("UseMaterialColors", true);
@@ -290,9 +303,9 @@ public class Main extends SimpleApplication {
 	) {
 		final Geometry wall = new Geometry(
 			"wall",
-			new Box(xSize / 2f, ySize / 2f, zSize / 2f)
+			new Box(xSize / 2f, ySize / 2f, zSize / 2f),
+			mat
 		);
-		wall.setMaterial(mat);
 		wall.setLocalTranslation(pos);
 		wall.setShadowMode(RenderQueue.ShadowMode.Receive);
 		this.rootNode.attachChild(wall);
@@ -315,17 +328,14 @@ public class Main extends SimpleApplication {
 			this.assetManager.loadFont("Interface/Fonts/Default.fnt");
 		this.hud = new BitmapText(guiFont);
 		this.hud.setSize(hudTextSize);
-		this.hud.setLocalTranslation(this.getHudPosition());
 		this.hud.setColor(hudTextColor);
-		this.updateHudText();
+
 		this.guiNode.attachChild(this.hud);
+
+		this.updateHud();
 	}
 
-	private Vector3f getHudPosition() {
-		return new Vector3f(15, this.cam.getHeight() - 15, 0);
-	}
-
-	private void updateHudText() {
+	private void updateHud() {
 		String pre = switch (this.inputMode) {
 			case InputMode.OFF -> switch (this.inputErrorStatus) {
 				case InputErrorStatus.OK -> "";
@@ -374,7 +384,13 @@ public class Main extends SimpleApplication {
 			middle,
 			controlsSep
 		);
+
+		this.hud.setLocalTranslation(this.computeHudPosition());
 		this.hud.setText(hudText);
+	}
+
+	private Vector3f computeHudPosition() {
+		return new Vector3f(0, this.cam.getHeight(), 0);
 	}
 
 	private void setupInput() {
@@ -594,44 +610,26 @@ public class Main extends SimpleApplication {
 	}
 
 	private void initDieTypes() {
-		final int d6Idx = 1, d10Idx = 3, dPercentIdx = 4;
+		final int nDieType = 7;
 
-		final String[] names = {
-			"D4",
-			"D6",
-			"D8",
-			"D10",
-			"D%",
-			"D12",
-			"D20",
-		};
+		final int d4Idx = 0;
+		final int d6Idx = 1;
+		final int d8Idx = 2;
+		final int d10Idx = 3;
+		final int dPercentIdx = 4;
+		final int d12Idx = 5;
+		final int d20Idx = 6;
 
-		final Spatial[] prototypes = new Spatial[names.length];
-		final CollisionShape[] collisionShapes =
-			new CollisionShape[names.length];
+		final String[] names = new String[nDieType];
+		names[d4Idx] = "D4";
+		names[d6Idx] = "D6";
+		names[d8Idx] = "D8";
+		names[d10Idx] = "D10";
+		names[dPercentIdx] = "D%";
+		names[d12Idx] = "D12";
+		names[d20Idx] = "D20";
 
-		for (int i = 0; i < names.length; ++i) {
-			/* D% uses the same model and collision shape as D10. */
-			if (i == dPercentIdx) {
-				continue;
-			}
-
-			final String name = names[i];
-			final String modelPath =
-				String.format("Models/Dice/%s.obj", name);
-			final Spatial model = this.assetManager.loadModel(modelPath);
-
-			final float modelScale = 0.5f;
-			model.scale(modelScale);
-
-			final CollisionShape collisionShape =
-				CollisionShapeFactory.createDynamicMeshShape(model);
-
-			prototypes[i] = model;
-			collisionShapes[i] = collisionShape;
-		}
-		prototypes[dPercentIdx] = prototypes[d10Idx].clone();
-		collisionShapes[dPercentIdx] = collisionShapes[d10Idx];
+		final float oneThird = 1f / 3;
 
 		final float sqrtOf1Div3 = (float)Math.sqrt(1.0 / 3);
 		final float sqrtOf2Div3 = (float)Math.sqrt(2.0 / 3);
@@ -643,371 +641,779 @@ public class Main extends SimpleApplication {
 		final float d10NormalConst70 = 0.7071067811865476f;
 		final float d10NormalConst74 = 0.743496068920369f;
 
-		final float d12NormalConstSmall = 0.5257311121191336f;
-		final float d12NormalConstBig = 0.85065080835204f;
+		final float d10CentroidConst20 = 0.2011239660476776f;
+		final float d10CentroidConst27 = 0.27639320225002103f;
+		final float d10CentroidConst38 = 0.382560516985538f;
+		final float d10CentroidConst52 = 0.5265493790649998125f;
+		final float d10CentroidConst61 = 0.61899591923633195f;
+		final float d10CentroidConst65 = 0.650850826034644425f;
 
-		final float d20NormalConstSmall = 0.35682208977308993f;
-		final float d20NormalConstBig = 0.9341723589627157f;
+		final float d12NormalConst52 = 0.5257311121191336f;
+		final float d12NormalConst85 = 0.85065080835204f;
 
-		final DieFace[][] faceArrays = {
-			/* D4. */
-			{
-				new DieFace(
-					"1",
-					1,
+		final float d12CentroidConst41 = 0.41777457946839342f;
+		final float d12CentroidConst67 = 0.675973469215554546f;
+
+		final float d20NormalConst35 = 0.35682208977308993f;
+		final float d20NormalConst93 = 0.9341723589627157f;
+
+		final float d20CentroidConst28 = 0.28355026945067996f;
+		final float d20CentroidConst45 = 0.4587939734903912f;
+		final float d20CentroidConst74 = 0.7423442429410712f;
+
+		final Pair<DieFace, Vector3f>[][] faceCentroidPairArrays =
+			(Pair<DieFace, Vector3f>[][])new Pair[nDieType][];
+		faceCentroidPairArrays[d4Idx] =
+			(Pair<DieFace, Vector3f>[])new Pair[] {
+				new Pair<>(
+					new DieFace(
+						"1",
+						1,
+						new Vector3f(sqrtOf2Div3, sqrtOf1Div3, 0)
+					),
 					new Vector3f(sqrtOf2Div3, sqrtOf1Div3, 0)
 				),
-				new DieFace(
-					"2",
-					2,
+				new Pair<>(
+					new DieFace(
+						"2",
+						2,
+						new Vector3f(-sqrtOf2Div3, sqrtOf1Div3, 0)
+					),
 					new Vector3f(-sqrtOf2Div3, sqrtOf1Div3, 0)
 				),
-				new DieFace(
-					"3",
-					3,
+				new Pair<>(
+					new DieFace(
+						"3",
+						3,
+						new Vector3f(0, -sqrtOf1Div3, -sqrtOf2Div3)
+					),
 					new Vector3f(0, -sqrtOf1Div3, -sqrtOf2Div3)
 				),
-				new DieFace(
-					"4",
-					4,
+				new Pair<>(
+					new DieFace(
+						"4",
+						4,
+						new Vector3f(0, -sqrtOf1Div3, sqrtOf2Div3)
+					),
 					new Vector3f(0, -sqrtOf1Div3, sqrtOf2Div3)
 				),
-			},
-			/* D6. */
-			{
-				new DieFace("1", 1, Vector3f.UNIT_Y),
-				new DieFace("2", 2, Vector3f.UNIT_Z),
-				new DieFace("3", 3, Vector3f.UNIT_X),
-				new DieFace("4", 4, Vector3f.UNIT_X.negate()),
-				new DieFace("5", 5, Vector3f.UNIT_Z.negate()),
-				new DieFace("6", 6, Vector3f.UNIT_Y.negate()),
-			},
-			/* D8. */
-			{
-				new DieFace(
-					"1",
-					1,
-					new Vector3f(sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+			};
+		faceCentroidPairArrays[d6Idx] =
+			(Pair<DieFace, Vector3f>[])new Pair[] {
+				new Pair<>(
+					new DieFace("1", 1, Vector3f.UNIT_Y),
+					Vector3f.UNIT_Y.mult(sqrtOf1Div3)
 				),
-				new DieFace(
-					"2",
-					2,
-					new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+				new Pair<>(
+					new DieFace("2", 2, Vector3f.UNIT_Z),
+					Vector3f.UNIT_Z.mult(sqrtOf1Div3)
 				),
-				new DieFace(
-					"3",
-					3,
-					new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+				new Pair<>(
+					new DieFace("3", 3, Vector3f.UNIT_X),
+					Vector3f.UNIT_X.mult(sqrtOf1Div3)
 				),
-				new DieFace(
-					"4",
-					4,
-					new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+				new Pair<>(
+					new DieFace("4", 4, Vector3f.UNIT_X.negate()),
+					Vector3f.UNIT_X.mult(-sqrtOf1Div3)
 				),
-				new DieFace(
-					"5",
-					5,
-					new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+				new Pair<>(
+					new DieFace("5", 5, Vector3f.UNIT_Z.negate()),
+					Vector3f.UNIT_Z.mult(-sqrtOf1Div3)
 				),
-				new DieFace(
-					"6",
-					6,
-					new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+				new Pair<>(
+					new DieFace("6", 6, Vector3f.UNIT_Y.negate()),
+					Vector3f.UNIT_Y.mult(-sqrtOf1Div3)
 				),
-				new DieFace(
-					"7",
-					7,
-					new Vector3f(sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+			};
+		faceCentroidPairArrays[d8Idx] =
+			(Pair<DieFace, Vector3f>[])new Pair[] {
+				new Pair<>(
+					new DieFace(
+						"1",
+						1,
+						new Vector3f(sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+					),
+					new Vector3f(oneThird, oneThird, -oneThird)
 				),
-				new DieFace(
-					"8",
-					8,
-					new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+				new Pair<>(
+					new DieFace(
+						"2",
+						2,
+						new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+					),
+					new Vector3f(-oneThird, -oneThird, -oneThird)
 				),
-			},
-			/* D10. */
-			{
-				new DieFace(
-					"0",
-					10,
+				new Pair<>(
+					new DieFace(
+						"3",
+						3,
+						new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+					),
+					new Vector3f(-oneThird, oneThird, -oneThird)
+				),
+				new Pair<>(
+					new DieFace(
+						"4",
+						4,
+						new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+					),
+					new Vector3f(oneThird, -oneThird, -oneThird)
+				),
+				new Pair<>(
+					new DieFace(
+						"5",
+						5,
+						new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+					),
+					new Vector3f(-oneThird, oneThird, oneThird)
+				),
+				new Pair<>(
+					new DieFace(
+						"6",
+						6,
+						new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+					),
+					new Vector3f(oneThird, -oneThird, oneThird)
+				),
+				new Pair<>(
+					new DieFace(
+						"7",
+						7,
+						new Vector3f(sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+					),
+					new Vector3f(oneThird, oneThird, oneThird)
+				),
+				new Pair<>(
+					new DieFace(
+						"8",
+						8,
+						new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+					),
+					new Vector3f(-oneThird, -oneThird, oneThird)
+				),
+			};
+		faceCentroidPairArrays[d10Idx] =
+			(Pair<DieFace, Vector3f>[])new Pair[] {
+				new Pair<>(
+					new DieFace(
+						"0",
+						10,
+						new Vector3f(
+							d10NormalConst60,
+							d10NormalConst66,
+							-d10NormalConst43
+						)
+					),
 					new Vector3f(
-						d10NormalConst60,
-						d10NormalConst66,
-						-d10NormalConst43
+						d10CentroidConst52,
+						d10CentroidConst27,
+						-d10CentroidConst38
 					)
 				),
-				new DieFace(
-					"1",
-					1,
+				new Pair<>(
+					new DieFace(
+						"1",
+						1,
+						new Vector3f(
+							-d10NormalConst60,
+							-d10NormalConst66,
+							-d10NormalConst43
+						)
+					),
 					new Vector3f(
-						-d10NormalConst60,
-						-d10NormalConst66,
-						-d10NormalConst43
+						-d10CentroidConst52,
+						-d10CentroidConst27,
+						-d10CentroidConst38
 					)
 				),
-				new DieFace(
-					"2",
-					2,
+				new Pair<>(
+					new DieFace(
+						"2",
+						2,
+						new Vector3f(
+							-d10NormalConst22,
+							d10NormalConst66,
+							d10NormalConst70
+						)
+					),
 					new Vector3f(
-						-d10NormalConst22,
-						d10NormalConst66,
-						d10NormalConst70
+						-d10CentroidConst20,
+						d10CentroidConst27,
+						d10CentroidConst61
 					)
 				),
-				new DieFace(
-					"3",
-					3,
+				new Pair<>(
+					new DieFace(
+						"3",
+						3,
+						new Vector3f(
+							d10NormalConst74,
+							-d10NormalConst66,
+							0
+						)
+					),
+					new Vector3f(d10CentroidConst65, -d10CentroidConst27, 0)
+				),
+				new Pair<>(
+					new DieFace(
+						"4",
+						4,
+						new Vector3f(
+							-d10NormalConst22,
+							d10NormalConst66,
+							-d10NormalConst70
+						)
+					),
 					new Vector3f(
-						d10NormalConst74,
-						-d10NormalConst66,
-						0
+						-d10CentroidConst20,
+						d10CentroidConst27,
+						-d10CentroidConst61
 					)
 				),
-				new DieFace(
-					"4",
-					4,
+				new Pair<>(
+					new DieFace(
+						"5",
+						5,
+						new Vector3f(
+							d10NormalConst22,
+							-d10NormalConst66,
+							d10NormalConst70
+						)
+					),
 					new Vector3f(
-						-d10NormalConst22,
-						d10NormalConst66,
-						-d10NormalConst70
+						d10CentroidConst20,
+						-d10CentroidConst27,
+						d10CentroidConst61
 					)
 				),
-				new DieFace(
-					"5",
-					5,
+				new Pair<>(
+					new DieFace(
+						"6",
+						6,
+						new Vector3f(
+							-d10NormalConst74,
+							d10NormalConst66,
+							0
+						)
+					),
+					new Vector3f(-d10CentroidConst65, d10CentroidConst27, 0)
+				),
+				new Pair<>(
+					new DieFace(
+						"7",
+						7,
+						new Vector3f(
+							d10NormalConst22,
+							-d10NormalConst66,
+							-d10NormalConst70
+						)
+					),
 					new Vector3f(
-						d10NormalConst22,
-						-d10NormalConst66,
-						d10NormalConst70
+						d10CentroidConst20,
+						-d10CentroidConst27,
+						-d10CentroidConst61
 					)
 				),
-				new DieFace(
-					"6",
-					6,
+				new Pair<>(
+					new DieFace(
+						"8",
+						8,
+						new Vector3f(
+							d10NormalConst60,
+							d10NormalConst66,
+							d10NormalConst43
+						)
+					),
 					new Vector3f(
-						-d10NormalConst74,
-						d10NormalConst66,
-						0
+						d10CentroidConst52,
+						d10CentroidConst27,
+						d10CentroidConst38
 					)
 				),
-				new DieFace(
-					"7",
-					7,
+				new Pair<>(
+					new DieFace(
+						"9",
+						9,
+						new Vector3f(
+							-d10NormalConst60,
+							-d10NormalConst66,
+							d10NormalConst43
+						)
+					),
 					new Vector3f(
-						d10NormalConst22,
-						-d10NormalConst66,
-						-d10NormalConst70
+						-d10CentroidConst52,
+						-d10CentroidConst27,
+						d10CentroidConst38
 					)
 				),
-				new DieFace(
-					"8",
-					8,
+			};
+		faceCentroidPairArrays[d12Idx] =
+			(Pair<DieFace, Vector3f>[])new Pair[] {
+				new Pair<>(
+					new DieFace(
+						"1",
+						1,
+						new Vector3f(d12NormalConst85, d12NormalConst52, 0)
+					),
+					new Vector3f(d12CentroidConst67, d12CentroidConst41, 0)
+				),
+				new Pair<>(
+					new DieFace(
+						"2",
+						2,
+						new Vector3f(d12NormalConst85, -d12NormalConst52, 0)
+					),
+					new Vector3f(d12CentroidConst67, -d12CentroidConst41, 0)
+				),
+				new Pair<>(
+					new DieFace(
+						"3",
+						3,
+						new Vector3f(-d12NormalConst52, 0, d12NormalConst85)
+					),
+					new Vector3f(-d12CentroidConst41, 0, d12CentroidConst67)
+				),
+				new Pair<>(
+					new DieFace(
+						"4",
+						4,
+						new Vector3f(d12NormalConst52, 0, d12NormalConst85)
+					),
+					new Vector3f(d12CentroidConst41, 0, d12CentroidConst67)
+				),
+				new Pair<>(
+					new DieFace(
+						"5",
+						5,
+						new Vector3f(0, d12NormalConst85, -d12NormalConst52)
+					),
+					new Vector3f(0, d12CentroidConst67, -d12CentroidConst41)
+				),
+				new Pair<>(
+					new DieFace(
+						"6",
+						6,
+						new Vector3f(0, d12NormalConst85, d12NormalConst52)
+					),
+					new Vector3f(0, d12CentroidConst67, d12CentroidConst41)
+				),
+				new Pair<>(
+					new DieFace(
+						"7",
+						7,
+						new Vector3f(0, -d12NormalConst85, -d12NormalConst52)
+					),
+					new Vector3f(0, -d12CentroidConst67, -d12CentroidConst41)
+				),
+				new Pair<>(
+					new DieFace(
+						"8",
+						8,
+						new Vector3f(0, -d12NormalConst85, d12NormalConst52)
+					),
+					new Vector3f(0, -d12CentroidConst67, d12CentroidConst41)
+				),
+				new Pair<>(
+					new DieFace(
+						"9",
+						9,
+						new Vector3f(-d12NormalConst52, 0, -d12NormalConst85)
+					),
+					new Vector3f(-d12CentroidConst41, 0, -d12CentroidConst67)
+				),
+				new Pair<>(
+					new DieFace(
+						"10",
+						10,
+						new Vector3f(d12NormalConst52, 0, -d12NormalConst85)
+					),
+					new Vector3f(d12CentroidConst41, 0, -d12CentroidConst67)
+				),
+				new Pair<>(
+					new DieFace(
+						"11",
+						11,
+						new Vector3f(-d12NormalConst85, d12NormalConst52, 0)
+					),
+					new Vector3f(-d12CentroidConst67, d12CentroidConst41, 0)
+				),
+				new Pair<>(
+					new DieFace(
+						"12",
+						12,
+						new Vector3f(-d12NormalConst85, -d12NormalConst52, 0)
+					),
+					new Vector3f(-d12CentroidConst67, -d12CentroidConst41, 0)
+				),
+			};
+		faceCentroidPairArrays[d20Idx] =
+			(Pair<DieFace, Vector3f>[])new Pair[] {
+				new Pair<>(
+					new DieFace(
+						"1",
+						1,
+						new Vector3f(d20NormalConst35, d20NormalConst93, 0)
+					),
+					new Vector3f(d20CentroidConst28, d20CentroidConst74, 0)
+				),
+				new Pair<>(
+					new DieFace(
+						"2",
+						2,
+						new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+					),
 					new Vector3f(
-						d10NormalConst60,
-						d10NormalConst66,
-						d10NormalConst43
+						-d20CentroidConst45,
+						-d20CentroidConst45,
+						-d20CentroidConst45
 					)
 				),
-				new DieFace(
-					"9",
-					9,
+				new Pair<>(
+					new DieFace(
+						"3",
+						3,
+						new Vector3f(d20NormalConst93, 0, d20NormalConst35)
+					),
+					new Vector3f(d20CentroidConst74, 0, d20CentroidConst28)
+				),
+				new Pair<>(
+					new DieFace(
+						"4",
+						4,
+						new Vector3f(-d20NormalConst93, 0, d20NormalConst35)
+					),
+					new Vector3f(-d20CentroidConst74, 0, d20CentroidConst28)
+				),
+				new Pair<>(
+					new DieFace(
+						"5",
+						5,
+						new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+					),
 					new Vector3f(
-						-d10NormalConst60,
-						-d10NormalConst66,
-						d10NormalConst43
+						-d20CentroidConst45,
+						d20CentroidConst45,
+						-d20CentroidConst45
 					)
 				),
-			},
-			/* D%: see below. */
-			null,
-			/* D12. */
-			{
-				new DieFace(
-					"1",
-					1,
-					new Vector3f(d12NormalConstBig, d12NormalConstSmall, 0)
+				new Pair<>(
+					new DieFace(
+						"6",
+						6,
+						new Vector3f(0, -d20NormalConst35, d20NormalConst93)
+					),
+					new Vector3f(0, -d20CentroidConst28, d20CentroidConst74)
 				),
-				new DieFace(
-					"2",
-					2,
-					new Vector3f(d12NormalConstBig, -d12NormalConstSmall, 0)
+				new Pair<>(
+					new DieFace(
+						"7",
+						7,
+						new Vector3f(sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+					),
+					new Vector3f(
+						d20CentroidConst45,
+						d20CentroidConst45,
+						-d20CentroidConst45
+					)
 				),
-				new DieFace(
-					"3",
-					3,
-					new Vector3f(-d12NormalConstSmall, 0, d12NormalConstBig)
+				new Pair<>(
+					new DieFace(
+						"8",
+						8,
+						new Vector3f(d20NormalConst35, -d20NormalConst93, 0)
+					),
+					new Vector3f(d20CentroidConst28, -d20CentroidConst74, 0)
 				),
-				new DieFace(
-					"4",
-					4,
-					new Vector3f(d12NormalConstSmall, 0, d12NormalConstBig)
+				new Pair<>(
+					new DieFace(
+						"9",
+						9,
+						new Vector3f(0, d20NormalConst35, d20NormalConst93)
+					),
+					new Vector3f(0, d20CentroidConst28, d20CentroidConst74)
 				),
-				new DieFace(
-					"5",
-					5,
-					new Vector3f(0, d12NormalConstBig, -d12NormalConstSmall)
+				new Pair<>(
+					new DieFace(
+						"10",
+						10,
+						new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+					),
+					new Vector3f(
+						d20CentroidConst45,
+						-d20CentroidConst45,
+						-d20CentroidConst45
+					)
 				),
-				new DieFace(
-					"6",
-					6,
-					new Vector3f(0, d12NormalConstBig, d12NormalConstSmall)
+				new Pair<>(
+					new DieFace(
+						"11",
+						11,
+						new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+					),
+					new Vector3f(
+						-d20CentroidConst45,
+						d20CentroidConst45,
+						d20CentroidConst45
+					)
 				),
-				new DieFace(
-					"7",
-					7,
-					new Vector3f(0, -d12NormalConstBig, -d12NormalConstSmall)
+				new Pair<>(
+					new DieFace(
+						"12",
+						12,
+						new Vector3f(0, -d20NormalConst35, -d20NormalConst93)
+					),
+					new Vector3f(0, -d20CentroidConst28, -d20CentroidConst74)
 				),
-				new DieFace(
-					"8",
-					8,
-					new Vector3f(0, -d12NormalConstBig, d12NormalConstSmall)
+				new Pair<>(
+					new DieFace(
+						"13",
+						13,
+						new Vector3f(-d20NormalConst35, d20NormalConst93, 0)
+					),
+					new Vector3f(-d20CentroidConst28, d20CentroidConst74, 0)
 				),
-				new DieFace(
-					"9",
-					9,
-					new Vector3f(-d12NormalConstSmall, 0, -d12NormalConstBig)
+				new Pair<>(
+					new DieFace(
+						"14",
+						14,
+						new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+					),
+					new Vector3f(
+						-d20CentroidConst45,
+						-d20CentroidConst45,
+						d20CentroidConst45
+					)
 				),
-				new DieFace(
-					"10",
-					10,
-					new Vector3f(d12NormalConstSmall, 0, -d12NormalConstBig)
+				new Pair<>(
+					new DieFace(
+						"15",
+						15,
+						new Vector3f(0, d20NormalConst35, -d20NormalConst93)
+					),
+					new Vector3f(0, d20CentroidConst28, -d20CentroidConst74)
 				),
-				new DieFace(
-					"11",
-					11,
-					new Vector3f(-d12NormalConstBig, d12NormalConstSmall, 0)
+				new Pair<>(
+					new DieFace(
+						"16",
+						16,
+						new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+					),
+					new Vector3f(
+						d20CentroidConst45,
+						-d20CentroidConst45,
+						d20CentroidConst45
+					)
 				),
-				new DieFace(
-					"12",
-					12,
-					new Vector3f(-d12NormalConstBig, -d12NormalConstSmall, 0)
+				new Pair<>(
+					new DieFace(
+						"17",
+						17,
+						new Vector3f(d20NormalConst93, 0, -d20NormalConst35)
+					),
+					new Vector3f(d20CentroidConst74, 0, -d20CentroidConst28)
 				),
-			},
-			/* D20. */
-			{
-				new DieFace(
-					"1",
-					1,
-					new Vector3f(d20NormalConstSmall, d20NormalConstBig, 0)
+				new Pair<>(
+					new DieFace(
+						"18",
+						18,
+						new Vector3f(-d20NormalConst93, 0, -d20NormalConst35)
+					),
+					new Vector3f(-d20CentroidConst74, 0, -d20CentroidConst28)
 				),
-				new DieFace(
-					"2",
-					2,
-					new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+				new Pair<>(
+					new DieFace(
+						"19",
+						19,
+						new Vector3f(sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+					),
+					new Vector3f(
+						d20CentroidConst45,
+						d20CentroidConst45,
+						d20CentroidConst45
+					)
 				),
-				new DieFace(
-					"3",
-					3,
-					new Vector3f(d20NormalConstBig, 0, d20NormalConstSmall)
+				new Pair<>(
+					new DieFace(
+						"20",
+						20,
+						new Vector3f(-d20NormalConst35, -d20NormalConst93, 0)
+					),
+					new Vector3f(-d20CentroidConst28, -d20CentroidConst74, 0)
 				),
-				new DieFace(
-					"4",
-					4,
-					new Vector3f(-d20NormalConstBig, 0, d20NormalConstSmall)
-				),
-				new DieFace(
-					"5",
-					5,
-					new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
-				),
-				new DieFace(
-					"6",
-					6,
-					new Vector3f(0, -d20NormalConstSmall, d20NormalConstBig)
-				),
-				new DieFace(
-					"7",
-					7,
-					new Vector3f(sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
-				),
-				new DieFace(
-					"8",
-					8,
-					new Vector3f(d20NormalConstSmall, -d20NormalConstBig, 0)
-				),
-				new DieFace(
-					"9",
-					9,
-					new Vector3f(0, d20NormalConstSmall, d20NormalConstBig)
-				),
-				new DieFace(
-					"10",
-					10,
-					new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
-				),
-				new DieFace(
-					"11",
-					11,
-					new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
-				),
-				new DieFace(
-					"12",
-					12,
-					new Vector3f(0, -d20NormalConstSmall, -d20NormalConstBig)
-				),
-				new DieFace(
-					"13",
-					13,
-					new Vector3f(-d20NormalConstSmall, d20NormalConstBig, 0)
-				),
-				new DieFace(
-					"14",
-					14,
-					new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
-				),
-				new DieFace(
-					"15",
-					15,
-					new Vector3f(0, d20NormalConstSmall, -d20NormalConstBig)
-				),
-				new DieFace(
-					"16",
-					16,
-					new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
-				),
-				new DieFace(
-					"17",
-					17,
-					new Vector3f(d20NormalConstBig, 0, -d20NormalConstSmall)
-				),
-				new DieFace(
-					"18",
-					18,
-					new Vector3f(-d20NormalConstBig, 0, -d20NormalConstSmall)
-				),
-				new DieFace(
-					"19",
-					19,
-					new Vector3f(sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
-				),
-				new DieFace(
-					"20",
-					20,
-					new Vector3f(-d20NormalConstSmall, -d20NormalConstBig, 0)
-				),
-			},
-		};
+			};
 
-		final DieFace[] dPercentFaces = faceArrays[d10Idx].clone();
-		for (int i = 0; i < dPercentFaces.length; ++i) {
-			final DieFace oldFace = dPercentFaces[i];
+		final Pair<DieFace, Vector3f>[] dPercentFaceCentroidPairs =
+			faceCentroidPairArrays[d10Idx].clone();
+		for (int i = 0; i < dPercentFaceCentroidPairs.length; ++i) {
+			final Pair<DieFace, Vector3f> oldFaceCentroidPair =
+				dPercentFaceCentroidPairs[i];
+			final DieFace oldFace = oldFaceCentroidPair.first();
+			final Vector3f centroid = oldFaceCentroidPair.second();
+
 			final DieFace newFace = new DieFace(
 				String.format("%s0", oldFace.displayValue()),
 				oldFace.totalValue() * 10,
 				oldFace.normal()
 			);
 
-			dPercentFaces[i] = newFace;
+			dPercentFaceCentroidPairs[i] = new Pair(newFace, centroid);
 		}
-		faceArrays[dPercentIdx] = dPercentFaces;
+		faceCentroidPairArrays[dPercentIdx] = dPercentFaceCentroidPairs;
 
-		this.dieTypes = IntStream.range(0, names.length)
+		final Vector3f[] principleAxes = new Vector3f[nDieType];
+		principleAxes[d4Idx] =
+			faceCentroidPairArrays[d4Idx][0].first().normal();
+		principleAxes[d6Idx] =
+			faceCentroidPairArrays[d6Idx][0].first().normal();
+		principleAxes[d8Idx] = Vector3f.UNIT_Y;
+		principleAxes[d10Idx] = Vector3f.UNIT_Y;
+		principleAxes[dPercentIdx] = Vector3f.UNIT_Y;
+		principleAxes[d12Idx] =
+			faceCentroidPairArrays[d12Idx][0].first().normal();
+		principleAxes[d20Idx] =
+			faceCentroidPairArrays[d20Idx][0].first().normal();
+
+		final Spatial[] models = new Spatial[nDieType];
+		final CollisionShape[] collisionShapes =
+			new CollisionShape[nDieType];
+
+		final Material dieMat = new Material(
+			this.assetManager,
+			"Common/MatDefs/Light/Lighting.j3md"
+		);
+		dieMat.setBoolean("UseMaterialColors", true);
+		final ColorRGBA dieColor = ColorRGBA.Yellow;
+		dieMat.setColor("Ambient", dieColor);
+		dieMat.setColor("Diffuse", dieColor);
+
+		for (int i = 0; i < nDieType; ++i) {
+			/* D% uses the same model and collision shape as D10. */
+			if (i == dPercentIdx) {
+				continue;
+			}
+
+			final String name = names[i];
+			final String modelPath =
+				String.format("Models/Dice/%s.obj", name);
+			final Spatial model = this.assetManager.loadModel(modelPath);
+
+			model.setMaterial(dieMat);
+
+			final RenderQueue.ShadowMode dieShadowMode =
+				RenderQueue.ShadowMode.CastAndReceive;
+			model.setShadowMode(dieShadowMode);
+
+			final CollisionShape collisionShape =
+				CollisionShapeFactory.createDynamicMeshShape(model);
+
+			models[i] = model;
+			collisionShapes[i] = collisionShape;
+		}
+		models[dPercentIdx] = models[d10Idx].clone();
+		collisionShapes[dPercentIdx] = collisionShapes[d10Idx];
+
+		final BitmapFont dieLabelFont =
+			this.assetManager.loadFont("Interface/Fonts/Default.fnt");
+		final ColorRGBA dieLabelColor = ColorRGBA.Black;
+
+		/* If the dice has both, say 6 and 9,
+		 * then which is which can be ambiguous. */
+		final boolean[] alwaysUnambiguousValueOrientations =
+			new boolean[nDieType];
+		alwaysUnambiguousValueOrientations[d4Idx] = true;
+		alwaysUnambiguousValueOrientations[d6Idx] = true;
+		alwaysUnambiguousValueOrientations[d8Idx] = true;
+		alwaysUnambiguousValueOrientations[d10Idx] = false;
+		alwaysUnambiguousValueOrientations[dPercentIdx] = false;
+		alwaysUnambiguousValueOrientations[d12Idx] = false;
+		alwaysUnambiguousValueOrientations[d20Idx] = false;
+
+		final Node[] prototypes = new Node[nDieType];
+		for (int i = 0; i < nDieType; ++i) {
+			final Spatial model = models[i];
+
+			final Node prototype = new Node(names[i]);
+			prototypes[i] = prototype;
+
+			final float dieScale = 0.5f;
+			prototype.scale(dieScale);
+
+			prototype.attachChild(model);
+
+			final Vector3f principleAxis = principleAxes[i];
+			final Pair<DieFace, Vector3f>[] faceCentroidPairs =
+				faceCentroidPairArrays[i];
+
+			// TODO: special handling for D4's "faces".
+			for (
+				final Pair<DieFace, Vector3f> faceCentroidPair :
+				faceCentroidPairs
+			) {
+				final DieFace face = faceCentroidPair.first();
+				String displayValue = face.displayValue();
+				final Vector3f normal = face.normal();
+				final Vector3f centroid = faceCentroidPair.second();
+
+				if (!alwaysUnambiguousValueOrientations[i]) {
+					/* If displayValue contains only 6's and/or 9's,
+					 * then the face's intended orientation/value
+					 * is ambiguous,
+					 * so we disambiguate by appending a full stop
+					 * to the value on the face. */
+					final boolean displayValueIsAmbiguous = displayValue
+						.codePoints()
+						.allMatch(x -> x == '6' || x == '9');
+					if (displayValueIsAmbiguous) {
+						final String displayValueDisambiguationSuffix = ".";
+						displayValue +=
+							displayValueDisambiguationSuffix;
+					}
+				}
+
+				final BitmapText label = new BitmapText(dieLabelFont);
+
+				final float labelTextSize = 0.5f;
+				label.setSize(labelTextSize);
+				label.setColor(dieLabelColor);
+				label.setText(displayValue);
+
+				final Node labelNode = new Node(
+					String.format("Face %s", displayValue)
+				);
+				labelNode.attachChild(label);
+				label.setLocalTranslation(
+					-label.getLineWidth() / 2,
+					label.getLineHeight() / 2,
+					0
+				);
+
+				final float labelNodeNormalOffset = 1e-4f;
+				final Vector3f labelNodePos =
+					centroid.add(normal.mult(labelNodeNormalOffset));
+
+				Vector3f up = principleAxis;
+				if (isParallel(normal, up)) {
+					up = findOrthogonal(up);
+				}
+				final Quaternion labelNodeRot =
+					new Quaternion().lookAt(normal, up);
+
+				labelNode.setLocalTranslation(labelNodePos);
+				labelNode.setLocalRotation(labelNodeRot);
+
+				prototype.attachChild(labelNode);
+			}
+		}
+
+		this.dieTypes = IntStream.range(0, nDieType)
 			.mapToObj(
 				i -> new DieType(
 					names[i],
 					prototypes[i],
 					collisionShapes[i],
-					faceArrays[i]
+					Arrays.stream(faceCentroidPairArrays[i])
+						.map(Pair::first)
+						.toArray(DieFace[]::new)
 				)
 			)
 			.toArray(DieType[]::new);
@@ -1185,9 +1591,21 @@ public class Main extends SimpleApplication {
 
 		public Vector3f position() {
 			return switch (this) {
-				case VERTICAL -> new Vector3f(0f, 9f, 0f);
-				case DIAGONAL -> new Vector3f(6f, 6f, 4f);
-				case HORIZONTAL -> new Vector3f(5f, 5f, 0f);
+				case VERTICAL -> new Vector3f(
+					0,
+					2 * DICE_TRAY_WALL_HEIGHT + 2,
+					0
+				);
+				case DIAGONAL -> new Vector3f(
+					DICE_TRAY_WIDTH / 2 + 1,
+					2 * DICE_TRAY_WALL_HEIGHT + 1,
+					DICE_TRAY_WIDTH / 2 + 1
+				);
+				case HORIZONTAL -> new Vector3f(
+					DICE_TRAY_WIDTH / 2 + 1,
+					2 * DICE_TRAY_WALL_HEIGHT + 1,
+					0
+				);
 			};
 		}
 
@@ -1195,7 +1613,7 @@ public class Main extends SimpleApplication {
 			return switch (this) {
 				case VERTICAL -> Vector3f.UNIT_Z;
 				case DIAGONAL -> Vector3f.UNIT_Y;
-				case HORIZONTAL -> Vector3f.UNIT_X;
+				case HORIZONTAL -> Vector3f.UNIT_X.negate();
 			};
 		}
 
@@ -1261,5 +1679,31 @@ public class Main extends SimpleApplication {
 		 * x is chosen uniformly at random
 		 * from the range [a, nextUp(b)) = [a, b]. */
 		return fastRandomFloat(origin, Math.nextUp(bound));
+	}
+
+	private static boolean isParallel(final Vector3f a, final Vector3f b) {
+		final Vector3f aProj = a.project(b);
+		final float tolerance = 0;
+		return a.isSimilar(aProj, tolerance);
+	}
+
+	private static Vector3f findOrthogonal(final Vector3f a) {
+		final Vector3f[] crossOperands = {
+			Vector3f.UNIT_X,
+			Vector3f.UNIT_Y,
+			Vector3f.UNIT_Z,
+		};
+
+		for (final Vector3f b : crossOperands) {
+			final Vector3f c = a.cross(b);
+
+			for (int i = 0; i < 3; ++i) {
+				if (c.get(i) != 0) {
+					return c;
+				}
+			}
+		}
+
+		return Vector3f.ZERO;
 	}
 }

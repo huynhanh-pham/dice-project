@@ -8,9 +8,10 @@ import com.jme3.app.SimpleApplication;
 import com.jme3.bullet.BulletAppState;
 
 import com.jme3.bullet.collision.shapes.CollisionShape;
-import com.jme3.bullet.collision.shapes.HullCollisionShape;
 
 import com.jme3.bullet.control.RigidBodyControl;
+
+import com.jme3.bullet.util.CollisionShapeFactory;
 
 import com.jme3.font.BitmapText;
 
@@ -34,7 +35,7 @@ import com.jme3.math.Vector3f;
 import com.jme3.renderer.queue.RenderQueue;
 
 import com.jme3.scene.Geometry;
-import com.jme3.scene.Mesh;
+import com.jme3.scene.Spatial;
 
 import com.jme3.scene.shape.Box;
 import com.jme3.scene.shape.Quad;
@@ -45,10 +46,9 @@ import com.jme3.shadow.SpotLightShadowRenderer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.OptionalInt;
+import java.util.Optional;
 
-import java.util.function.Supplier;
-
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 public class Main extends SimpleApplication {
@@ -57,17 +57,22 @@ public class Main extends SimpleApplication {
 	private static final float DICE_TRAY_WALL_HEIGHT = 3.5f;
 	private static final float DICE_TRAY_WALL_THICKNESS = 0.2f;
 
-	private static final String HUD_COMMON_TEXT_COMMON_HEAD_TAIL_SEPARATOR =
-		" ";
+	private static final String DIE_TYPE_NAME_PREFIX = "D";
+
+	private static final int DIE_COUNT_MAX = 100;
 
 	private BulletAppState physics;
 	private BitmapText hud;
 	private CameraView cameraView;
+	private InputMode inputMode;
+	private InputErrorStatus inputErrorStatus;
+	private StringBuilder inputBuffer;
 	private DieType[] dieTypes;
 	private DieType currentDieType;
 	/* How many dice to roll. */
-	private int numDice;
-	private List<Geometry> dice;
+	private int dieCount;
+	private List<Spatial> dice;
+	private List<DieFace> dieRollResults;
 	/* For getting die-roll results in simpleUpdate. */
 	private float settleTimer;
 
@@ -88,26 +93,30 @@ public class Main extends SimpleApplication {
 		/* Intializes this.dieTypes and this.currentDieType. */
 		this.initDieTypes();
 
-		final int numDiceDefault = 1;
-		this.numDice = numDiceDefault;
+		final int dieCountDefault = 1;
+		this.dieCount = dieCountDefault;
 		this.dice = new ArrayList<>();
-		/* For getting die-roll results in simpleUpdate. */
-		this.settleTimer = 0;
+		this.dieRollResults = new ArrayList<>();
 
+		this.setupInput();
 		this.setupLights();
 		this.setupDiceTray();
 		this.setupHUD();
-		this.setupInput();
 	}
 
 	@Override
 	public void simpleUpdate(final float tpf) {
-		if (this.dice.isEmpty()) {
+		this.simpleUpdateImpl(tpf);
+		this.updateHudText();
+	}
+
+	private void simpleUpdateImpl(final float tpf) {
+		if (this.dice.isEmpty() || !this.dieRollResults.isEmpty()) {
 			return;
 		}
 
 		float vSum = 0, wSum = 0;
-		for (final Geometry die : this.dice) {
+		for (final Spatial die : this.dice) {
 			final RigidBodyControl dieBody =
 				die.getControl(RigidBodyControl.class);
 
@@ -121,33 +130,22 @@ public class Main extends SimpleApplication {
 			return;
 		}
 
-		this.settleTimer += tpf;
-		final float settleTimerCutoff = 0.8f;
-		if (settleTimer <= settleTimerCutoff) {
+		final float settleTimerCutoff = 1;
+		this.settleTimer = Math.min(
+			this.settleTimer + tpf,
+			settleTimerCutoff
+		);
+		if (this.settleTimer < settleTimerCutoff) {
 			return;
 		}
 
-		final StringBuilder sb = new StringBuilder();
-		sb.append(System.lineSeparator())
-			.append("Rolled: ");
-
-		int total = 0;
-		for (final Geometry die : this.dice) {
-			final int result = this.readDieResult(die);
-			sb.append(result).append(" ");
-			total += result;
+		for (final Spatial die : this.dice) {
+			this.dieRollResults.add(this.readDieFace(die));
 		}
-		sb.append(System.lineSeparator())
-			.append("Total = ")
-			.append(total)
-			.append(System.lineSeparator());
-
-		this.hud.setText(this.getHudCommonText(sb.toString()));
 	}
 
 	private void setupLights() {
-		final Vector3f sunlightDirection =
-			new Vector3f(0.1f, -0.1f, 0.1f);
+		final Vector3f sunlightDirection = new Vector3f(0.1f, -0.1f, 0.1f);
 		final ColorRGBA sunlightColor = ColorRGBA.White;
 
 		final DirectionalLight sunlight = new DirectionalLight();
@@ -211,10 +209,8 @@ public class Main extends SimpleApplication {
 	}
 
 	private void setupWalls() {
-		final ColorRGBA wallDiffuseColor =
-			new ColorRGBA(1,1,1,0.5f);
-		final ColorRGBA wallSpecularColor =
-			new ColorRGBA(0,0,0,0.5f);
+		final ColorRGBA wallDiffuseColor = new ColorRGBA(1, 1, 1, 0.5f);
+		final ColorRGBA wallSpecularColor = new ColorRGBA(0, 0, 0, 0.5f);
 		final float wallShininess = 16f;
 
 		final Material wallMat = new Material(
@@ -321,9 +317,7 @@ public class Main extends SimpleApplication {
 		this.hud.setSize(hudTextSize);
 		this.hud.setLocalTranslation(this.getHudPosition());
 		this.hud.setColor(hudTextColor);
-		this.hud.setText(
-			this.getHudCommonText(HUD_COMMON_TEXT_COMMON_HEAD_TAIL_SEPARATOR)
-		);
+		this.updateHudText();
 		this.guiNode.attachChild(this.hud);
 	}
 
@@ -331,24 +325,85 @@ public class Main extends SimpleApplication {
 		return new Vector3f(15, this.cam.getHeight() - 15, 0);
 	}
 
-	private String getHudCommonText(final String headTailSep) {
-		return String.format(
-			"Current Die: %s x%d%s(SPACE=roll; N=set count; C=camera)",
-			this.currentDieType.name(), this.numDice, headTailSep
+	private void updateHudText() {
+		String pre = switch (this.inputMode) {
+			case InputMode.OFF -> switch (this.inputErrorStatus) {
+				case InputErrorStatus.OK -> "";
+				case InputErrorStatus.INVALID_DIE_TYPE ->
+					"Invalid die type; keeping previous";
+				case InputErrorStatus.INVALID_DIE_COUNT ->
+					"Invalid die count; keeping previous";
+				case InputErrorStatus.TOO_BIG_DIE_COUNT ->
+					String.format(
+						"Max die count is %d! Using %d",
+						DIE_COUNT_MAX, this.dieCount
+					);
+			};
+			case InputMode.DIE_TYPE ->
+				String.format("Enter die type: %s", this.inputBuffer);
+			case InputMode.DIE_COUNT ->
+				String.format("Enter die count: %s", this.inputBuffer);
+		};
+		if (!pre.isEmpty()) {
+			pre += System.lineSeparator() + System.lineSeparator();
+		}
+
+		String middle = "";
+		if (!this.dieRollResults.isEmpty()) {
+			final int rollTotal = this.dieRollResults.stream()
+				.mapToInt(DieFace::totalValue)
+				.sum();
+
+			middle = this.dieRollResults.stream()
+				.map(DieFace::displayValue)
+				.collect(
+					Collectors.joining(
+						" ",
+						"Rolled: ",
+						String.format("%nTotal: %d%n", rollTotal)
+					)
+				);
+		}
+
+		final String controlsSep = "  ";
+		final String hudText = String.format(
+			"%sCurrent Die: %s x%d%n%sSPACE=roll%sT=set type%<sN=set count%<sC=camera",
+			pre,
+			this.currentDieType.name(),
+			this.dieCount,
+			middle,
+			controlsSep
 		);
+		this.hud.setText(hudText);
 	}
 
 	private void setupInput() {
+		this.inputMode = InputMode.OFF;
+		this.inputErrorStatus = InputErrorStatus.OK;
+		this.inputBuffer = new StringBuilder();
+
 		/* Actions upon key triggers. */
 		final String rollDiceActionName = "ROLL_DICE";
 		final String cycleCameraViewActionName = "CYCLE_CAMERA_VIEW";
-		final String setNumDiceActionName = "SET_NUM_DICE";
-		final String confirmNumDiceActionName = "CONFIRM_NUM_DICE";
-		final String numDiceDigitActionName = "NUM_DICE_DIGIT";
+		final String setDieTypeActionName = "SET_DIE_TYPE";
+		final String setDieCountActionName = "SET_DIE_COUNT";
+		final String confirmInputActionName = "CONFIRM_INPUT";
 
-		/* Input mode and buffer for typing number of dice. */
-		final InputModeAndBuffer inputModeAndBuffer =
-			new InputModeAndBuffer();
+		/* Digit-action names are of the form "DIGIT"d,
+		 * where d is a decimal digit. */
+		final String digitActionNamePrefix = "DIGIT";
+		/* Ideally,
+		 * we would test for when the regular "5" key is pressed
+		 * together with either "shift" key,
+		 * but,
+		 * for simplicity,
+		 * we unconditionally interpret
+		 * both the regular and number-pad "5" key
+		 * as "%"
+		 * when setting the die type,
+		 * which should not cause any problems
+		 * since no die type has "5" in its name. */
+		final String percentDigitActionNameAffix = "5";
 
 		final ActionListener actionListener = new ActionListener() {
 			@Override
@@ -358,100 +413,100 @@ public class Main extends SimpleApplication {
 				final float tpf
 			) {
 				final Main main = Main.this;
-				final InputModeAndBuffer imb = inputModeAndBuffer;
+
+				final Runnable resetInputModeAndBuffer = () -> {
+					main.inputMode = InputMode.OFF;
+					main.inputBuffer.setLength(0);
+				};
 
 				if (isPressed) {
 					return;
 				}
 
-				if (name.equals(rollDiceActionName)) {
-					if (imb.inputMode) {
-						return;
+				main.inputErrorStatus = InputErrorStatus.OK;
+
+				switch (main.inputMode) {
+					case InputMode.OFF -> {
+						if (name.equals(rollDiceActionName)) {
+							main.clearDice();
+							for (int i = 0; i < main.dieCount; ++i) {
+								main.createAndRollDie();
+							}
+						} else if (name.equals(cycleCameraViewActionName)) {
+							main.setCameraView(main.cameraView.next());
+						} else if (name.equals(setDieTypeActionName)) {
+							main.inputMode = InputMode.DIE_TYPE;
+							main.inputBuffer.append(DIE_TYPE_NAME_PREFIX);
+						} else if (name.equals(setDieCountActionName)) {
+							main.inputMode = InputMode.DIE_COUNT;
+						}
 					}
-
-					main.clearDice();
-					for (int i = 0; i < main.numDice; ++i) {
-						main.createAndRollDie(main.currentDieType);
-					}
-				} else if (name.equals(cycleCameraViewActionName)) {
-					if (imb.inputMode) {
-						return;
-					}
-
-					main.setCameraView(main.cameraView.next());
-				} else if (name.equals(setNumDiceActionName)) {
-					imb.inputMode = true;
-					imb.inputBuffer.setLength(0);
-					main.hud.setText(
-						"Enter number of dice, then press ENTER:"
-					);
-				} else if (name.startsWith(numDiceDigitActionName)) {
-					if (!imb.inputMode) {
-						return;
-					}
-
-					/* DIGIT# -> #. */
-					imb.inputBuffer.append(
-						name.substring(numDiceDigitActionName.length())
-					);
-					main.hud.setText(
-						String.format(
-							"Enter number of dice: %s",
-							imb.inputBuffer
-						)
-					);
-				} else if (name.equals(confirmNumDiceActionName)) {
-					if (!imb.inputMode) {
-						return;
-					}
-
-					OptionalInt maybeValue = OptionalInt.empty();
-					try {
-						maybeValue = OptionalInt.of(
-							Integer.parseInt(imb.inputBuffer.toString())
-						);
-					} catch (NumberFormatException e) {}
-
-					final Supplier<String> getHudCommonText = () ->
-						main.getHudCommonText(
-							HUD_COMMON_TEXT_COMMON_HEAD_TAIL_SEPARATOR
-						);
-
-					maybeValue.ifPresentOrElse(
-						value -> {
-							if (value <= 0) {
-								return;
+					case InputMode.DIE_TYPE -> {
+						if (name.startsWith(digitActionNamePrefix)) {
+							/* DIGIT# -> #. */
+							String ch = name.substring(
+								digitActionNamePrefix.length()
+							);
+							if (ch.equals(percentDigitActionNameAffix)) {
+								ch = "%";
 							}
 
-							final int numDiceMax = 100;
+							main.inputBuffer.append(ch);
+						} else if (name.equals(confirmInputActionName)) {
+							final String dieTypeName =
+								main.inputBuffer.toString();
 
-							main.numDice = Math.min(value, numDiceMax);
+							Arrays.stream(main.dieTypes)
+								.filter(
+									type -> dieTypeName.equals(type.name())
+								)
+								.findFirst()
+								.ifPresentOrElse(
+									type -> main.currentDieType = type,
+									() -> main.inputErrorStatus =
+										InputErrorStatus.INVALID_DIE_TYPE
+								);
 
-							System.out.println(main.numDice);
-
-							if (value > numDiceMax) {
-								main.hud.setText(
-									String.format(
-										"Max is %d dice! Using %d.%n%s",
-										numDiceMax,
-										numDiceMax,
-										getHudCommonText.get()
+							resetInputModeAndBuffer.run();
+						}
+					}
+					case InputMode.DIE_COUNT -> {
+						if (name.startsWith(digitActionNamePrefix)) {
+							/* DIGIT# -> #. */
+							main.inputBuffer.append(
+								name.substring(
+									digitActionNamePrefix.length()
+								)
+							);
+						} else if (name.equals(confirmInputActionName)) {
+							Optional<Integer> maybeCount = Optional.empty();
+							try {
+								maybeCount = Optional.of(
+									Integer.parseInt(
+										main.inputBuffer.toString()
 									)
 								);
-							} else {
-								main.hud.setText(getHudCommonText.get());
-							}
-						},
-						() -> main.hud.setText(
-							String.format(
-								"Invalid number; keeping previous value.%n%s",
-								getHudCommonText.get()
-							)
-						)
-					);
+							} catch (NumberFormatException e) {}
 
-					imb.inputMode = false;
-					main.clearDice();
+							maybeCount
+								.filter(count -> count > 0)
+								.ifPresentOrElse(
+									count -> {
+										main.dieCount =
+											Math.min(count, DIE_COUNT_MAX);
+
+										if (count > DIE_COUNT_MAX) {
+											main.inputErrorStatus =
+												InputErrorStatus.TOO_BIG_DIE_COUNT;
+										}
+									},
+									() -> main.inputErrorStatus =
+										InputErrorStatus.INVALID_DIE_COUNT
+								);
+
+							resetInputModeAndBuffer.run();
+						}
+					}
 				}
 			}
 		};
@@ -459,12 +514,14 @@ public class Main extends SimpleApplication {
 		final String[] generalActions = {
 			rollDiceActionName,
 			cycleCameraViewActionName,
-			setNumDiceActionName,
-			confirmNumDiceActionName,
+			setDieTypeActionName,
+			setDieCountActionName,
+			confirmInputActionName,
 		};
 		final int[] generalActionKeyCodes = {
 			KeyInput.KEY_SPACE,
 			KeyInput.KEY_C,
+			KeyInput.KEY_T,
 			KeyInput.KEY_N,
 			KeyInput.KEY_RETURN,
 		};
@@ -496,16 +553,24 @@ public class Main extends SimpleApplication {
 				.toArray(KeyTrigger[]::new);
 
 			final String digitAction =
-				String.format("%s%d", numDiceDigitActionName, i);
+				String.format("%s%d", digitActionNamePrefix, i);
 
 			this.inputManager.addMapping(digitAction, triggers);
 			this.inputManager.addListener(actionListener, digitAction);
 		}
 	}
 
-	private static class InputModeAndBuffer {
-		public boolean inputMode = false;
-		public final StringBuilder inputBuffer = new StringBuilder();
+	private static enum InputMode {
+		OFF,
+		DIE_TYPE,
+		DIE_COUNT;
+	}
+
+	private static enum InputErrorStatus {
+		OK,
+		INVALID_DIE_TYPE,
+		INVALID_DIE_COUNT,
+		TOO_BIG_DIE_COUNT;
 	}
 
 	private void setCameraView(final CameraView cameraView) {
@@ -515,7 +580,7 @@ public class Main extends SimpleApplication {
 	}
 
 	private void clearDice() {
-		for (final Geometry die : this.dice) {
+		for (final Spatial die : this.dice) {
 			final RigidBodyControl dieBody =
 				die.getControl(RigidBodyControl.class);
 
@@ -523,71 +588,439 @@ public class Main extends SimpleApplication {
 			this.rootNode.detachChild(die);
 		}
 		this.dice.clear();
+
+		this.dieRollResults.clear();
+		this.settleTimer = 0;
 	}
 
 	private void initDieTypes() {
+		final int d6Idx = 1, d10Idx = 3, dPercentIdx = 4;
+
 		final String[] names = {
+			"D4",
 			"D6",
+			"D8",
+			"D10",
+			"D%",
+			"D12",
+			"D20",
 		};
 
+		final Spatial[] prototypes = new Spatial[names.length];
+		final CollisionShape[] collisionShapes =
+			new CollisionShape[names.length];
+
+		for (int i = 0; i < names.length; ++i) {
+			/* D% uses the same model and collision shape as D10. */
+			if (i == dPercentIdx) {
+				continue;
+			}
+
+			final String name = names[i];
+			final String modelPath =
+				String.format("Models/Dice/%s.obj", name);
+			final Spatial model = this.assetManager.loadModel(modelPath);
+
+			final float modelScale = 0.5f;
+			model.scale(modelScale);
+
+			final CollisionShape collisionShape =
+				CollisionShapeFactory.createDynamicMeshShape(model);
+
+			prototypes[i] = model;
+			collisionShapes[i] = collisionShape;
+		}
+		prototypes[dPercentIdx] = prototypes[d10Idx].clone();
+		collisionShapes[dPercentIdx] = collisionShapes[d10Idx];
+
+		final float sqrtOf1Div3 = (float)Math.sqrt(1.0 / 3);
+		final float sqrtOf2Div3 = (float)Math.sqrt(2.0 / 3);
+
+		final float d10NormalConst22 = 0.22975292054736118f;
+		final float d10NormalConst43 = 0.43701602444882104f;
+		final float d10NormalConst60 = 0.6015009550075456f;
+		final float d10NormalConst66 = 0.668740304976422f;
+		final float d10NormalConst70 = 0.7071067811865476f;
+		final float d10NormalConst74 = 0.743496068920369f;
+
+		final float d12NormalConstSmall = 0.5257311121191336f;
+		final float d12NormalConstBig = 0.85065080835204f;
+
+		final float d20NormalConstSmall = 0.35682208977308993f;
+		final float d20NormalConstBig = 0.9341723589627157f;
+
 		final DieFace[][] faceArrays = {
+			/* D4. */
+			{
+				new DieFace(
+					"1",
+					1,
+					new Vector3f(sqrtOf2Div3, sqrtOf1Div3, 0)
+				),
+				new DieFace(
+					"2",
+					2,
+					new Vector3f(-sqrtOf2Div3, sqrtOf1Div3, 0)
+				),
+				new DieFace(
+					"3",
+					3,
+					new Vector3f(0, -sqrtOf1Div3, -sqrtOf2Div3)
+				),
+				new DieFace(
+					"4",
+					4,
+					new Vector3f(0, -sqrtOf1Div3, sqrtOf2Div3)
+				),
+			},
 			/* D6. */
 			{
-				new DieFace(Vector3f.UNIT_Y, 1),
-				new DieFace(Vector3f.UNIT_Y.negate(), 6),
-				new DieFace(Vector3f.UNIT_Z, 2),
-				new DieFace(Vector3f.UNIT_Z.negate(), 5),
-				new DieFace(Vector3f.UNIT_X, 3),
-				new DieFace(Vector3f.UNIT_X.negate(), 4),
+				new DieFace("1", 1, Vector3f.UNIT_Y),
+				new DieFace("2", 2, Vector3f.UNIT_Z),
+				new DieFace("3", 3, Vector3f.UNIT_X),
+				new DieFace("4", 4, Vector3f.UNIT_X.negate()),
+				new DieFace("5", 5, Vector3f.UNIT_Z.negate()),
+				new DieFace("6", 6, Vector3f.UNIT_Y.negate()),
+			},
+			/* D8. */
+			{
+				new DieFace(
+					"1",
+					1,
+					new Vector3f(sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+				),
+				new DieFace(
+					"2",
+					2,
+					new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+				),
+				new DieFace(
+					"3",
+					3,
+					new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+				),
+				new DieFace(
+					"4",
+					4,
+					new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+				),
+				new DieFace(
+					"5",
+					5,
+					new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+				),
+				new DieFace(
+					"6",
+					6,
+					new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+				),
+				new DieFace(
+					"7",
+					7,
+					new Vector3f(sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+				),
+				new DieFace(
+					"8",
+					8,
+					new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+				),
+			},
+			/* D10. */
+			{
+				new DieFace(
+					"0",
+					10,
+					new Vector3f(
+						d10NormalConst60,
+						d10NormalConst66,
+						-d10NormalConst43
+					)
+				),
+				new DieFace(
+					"1",
+					1,
+					new Vector3f(
+						-d10NormalConst60,
+						-d10NormalConst66,
+						-d10NormalConst43
+					)
+				),
+				new DieFace(
+					"2",
+					2,
+					new Vector3f(
+						-d10NormalConst22,
+						d10NormalConst66,
+						d10NormalConst70
+					)
+				),
+				new DieFace(
+					"3",
+					3,
+					new Vector3f(
+						d10NormalConst74,
+						-d10NormalConst66,
+						0
+					)
+				),
+				new DieFace(
+					"4",
+					4,
+					new Vector3f(
+						-d10NormalConst22,
+						d10NormalConst66,
+						-d10NormalConst70
+					)
+				),
+				new DieFace(
+					"5",
+					5,
+					new Vector3f(
+						d10NormalConst22,
+						-d10NormalConst66,
+						d10NormalConst70
+					)
+				),
+				new DieFace(
+					"6",
+					6,
+					new Vector3f(
+						-d10NormalConst74,
+						d10NormalConst66,
+						0
+					)
+				),
+				new DieFace(
+					"7",
+					7,
+					new Vector3f(
+						d10NormalConst22,
+						-d10NormalConst66,
+						-d10NormalConst70
+					)
+				),
+				new DieFace(
+					"8",
+					8,
+					new Vector3f(
+						d10NormalConst60,
+						d10NormalConst66,
+						d10NormalConst43
+					)
+				),
+				new DieFace(
+					"9",
+					9,
+					new Vector3f(
+						-d10NormalConst60,
+						-d10NormalConst66,
+						d10NormalConst43
+					)
+				),
+			},
+			/* D%: see below. */
+			null,
+			/* D12. */
+			{
+				new DieFace(
+					"1",
+					1,
+					new Vector3f(d12NormalConstBig, d12NormalConstSmall, 0)
+				),
+				new DieFace(
+					"2",
+					2,
+					new Vector3f(d12NormalConstBig, -d12NormalConstSmall, 0)
+				),
+				new DieFace(
+					"3",
+					3,
+					new Vector3f(-d12NormalConstSmall, 0, d12NormalConstBig)
+				),
+				new DieFace(
+					"4",
+					4,
+					new Vector3f(d12NormalConstSmall, 0, d12NormalConstBig)
+				),
+				new DieFace(
+					"5",
+					5,
+					new Vector3f(0, d12NormalConstBig, -d12NormalConstSmall)
+				),
+				new DieFace(
+					"6",
+					6,
+					new Vector3f(0, d12NormalConstBig, d12NormalConstSmall)
+				),
+				new DieFace(
+					"7",
+					7,
+					new Vector3f(0, -d12NormalConstBig, -d12NormalConstSmall)
+				),
+				new DieFace(
+					"8",
+					8,
+					new Vector3f(0, -d12NormalConstBig, d12NormalConstSmall)
+				),
+				new DieFace(
+					"9",
+					9,
+					new Vector3f(-d12NormalConstSmall, 0, -d12NormalConstBig)
+				),
+				new DieFace(
+					"10",
+					10,
+					new Vector3f(d12NormalConstSmall, 0, -d12NormalConstBig)
+				),
+				new DieFace(
+					"11",
+					11,
+					new Vector3f(-d12NormalConstBig, d12NormalConstSmall, 0)
+				),
+				new DieFace(
+					"12",
+					12,
+					new Vector3f(-d12NormalConstBig, -d12NormalConstSmall, 0)
+				),
+			},
+			/* D20. */
+			{
+				new DieFace(
+					"1",
+					1,
+					new Vector3f(d20NormalConstSmall, d20NormalConstBig, 0)
+				),
+				new DieFace(
+					"2",
+					2,
+					new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+				),
+				new DieFace(
+					"3",
+					3,
+					new Vector3f(d20NormalConstBig, 0, d20NormalConstSmall)
+				),
+				new DieFace(
+					"4",
+					4,
+					new Vector3f(-d20NormalConstBig, 0, d20NormalConstSmall)
+				),
+				new DieFace(
+					"5",
+					5,
+					new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+				),
+				new DieFace(
+					"6",
+					6,
+					new Vector3f(0, -d20NormalConstSmall, d20NormalConstBig)
+				),
+				new DieFace(
+					"7",
+					7,
+					new Vector3f(sqrtOf1Div3, sqrtOf1Div3, -sqrtOf1Div3)
+				),
+				new DieFace(
+					"8",
+					8,
+					new Vector3f(d20NormalConstSmall, -d20NormalConstBig, 0)
+				),
+				new DieFace(
+					"9",
+					9,
+					new Vector3f(0, d20NormalConstSmall, d20NormalConstBig)
+				),
+				new DieFace(
+					"10",
+					10,
+					new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, -sqrtOf1Div3)
+				),
+				new DieFace(
+					"11",
+					11,
+					new Vector3f(-sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+				),
+				new DieFace(
+					"12",
+					12,
+					new Vector3f(0, -d20NormalConstSmall, -d20NormalConstBig)
+				),
+				new DieFace(
+					"13",
+					13,
+					new Vector3f(-d20NormalConstSmall, d20NormalConstBig, 0)
+				),
+				new DieFace(
+					"14",
+					14,
+					new Vector3f(-sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+				),
+				new DieFace(
+					"15",
+					15,
+					new Vector3f(0, d20NormalConstSmall, -d20NormalConstBig)
+				),
+				new DieFace(
+					"16",
+					16,
+					new Vector3f(sqrtOf1Div3, -sqrtOf1Div3, sqrtOf1Div3)
+				),
+				new DieFace(
+					"17",
+					17,
+					new Vector3f(d20NormalConstBig, 0, -d20NormalConstSmall)
+				),
+				new DieFace(
+					"18",
+					18,
+					new Vector3f(-d20NormalConstBig, 0, -d20NormalConstSmall)
+				),
+				new DieFace(
+					"19",
+					19,
+					new Vector3f(sqrtOf1Div3, sqrtOf1Div3, sqrtOf1Div3)
+				),
+				new DieFace(
+					"20",
+					20,
+					new Vector3f(-d20NormalConstSmall, -d20NormalConstBig, 0)
+				),
 			},
 		};
 
-		final float dieD6HalfExtent = 0.25f;
+		final DieFace[] dPercentFaces = faceArrays[d10Idx].clone();
+		for (int i = 0; i < dPercentFaces.length; ++i) {
+			final DieFace oldFace = dPercentFaces[i];
+			final DieFace newFace = new DieFace(
+				String.format("%s0", oldFace.displayValue()),
+				oldFace.totalValue() * 10,
+				oldFace.normal()
+			);
 
-		final Mesh[] meshes = {
-			/* D6. */
-			new Box(dieD6HalfExtent, dieD6HalfExtent, dieD6HalfExtent),
-		};
-
-		final CollisionShape[] collisionShapes = Arrays.stream(meshes)
-			.map(HullCollisionShape::new)
-			.toArray(CollisionShape[]::new);
+			dPercentFaces[i] = newFace;
+		}
+		faceArrays[dPercentIdx] = dPercentFaces;
 
 		this.dieTypes = IntStream.range(0, names.length)
 			.mapToObj(
 				i -> new DieType(
 					names[i],
-					faceArrays[i],
-					meshes[i],
-					collisionShapes[i]
+					prototypes[i],
+					collisionShapes[i],
+					faceArrays[i]
 				)
 			)
 			.toArray(DieType[]::new);
 
-		final String defaultDieTypeName = "D6";
-		for (final DieType type : this.dieTypes) {
-			if (type.name().equals(defaultDieTypeName)) {
-				this.currentDieType = type;
-				break;
-			}
-		}
-
-		assert this.currentDieType != null;
+		this.currentDieType = this.dieTypes[d6Idx];
 	}
 
-	private void createAndRollDie(DieType type) {
+	private void createAndRollDie() {
 		/* Create the die. */
-		final Material mat = new Material(
-			this.assetManager,
-			"Common/MatDefs/Light/Lighting.j3md"
-		);
-		mat.setBoolean("UseMaterialColors", true);
-		mat.setColor("Diffuse", ColorRGBA.Yellow);
-
-		final Geometry die = new Geometry(type.name(), type.mesh(), mat);
+		final Spatial die = this.currentDieType.prototype().clone();
 
 		final RigidBodyControl dieBody =
-			new RigidBodyControl(type.collisionShape());
+			new RigidBodyControl(this.currentDieType.collisionShape());
 		die.addControl(dieBody);
 
 		this.rootNode.attachChild(die);
@@ -663,7 +1096,7 @@ public class Main extends SimpleApplication {
 			+ Math.abs(v.getZ());
 	}
 
-	private int readDieResult(final Geometry die) {
+	private DieFace readDieFace(final Spatial die) {
 		/* If the "most upward" face of the die is exactly horizontal,
 		 * then its outward unit normal is currently (0, 1, 0).
 		 * Therefore,
@@ -716,31 +1149,33 @@ public class Main extends SimpleApplication {
 		final Vector3f up = Vector3f.UNIT_Y;
 		final Vector3f upFaceOriginalNormal = rotation.inverse().mult(up);
 
-		int bestValue = 0;
+		DieFace bestFace = null;
 		float bestDot = Float.NEGATIVE_INFINITY;
 		for (final DieFace face : dieType.faces()) {
 			final float dot = upFaceOriginalNormal.dot(face.normal());
 			if (dot > bestDot) {
 				bestDot = dot;
-				bestValue = face.value();
+				bestFace = face;
 			}
 		}
 
-		return bestValue;
+		return bestFace;
 	}
 
 	private static record DieType(
 		String name,
-		DieFace[] faces,
-		Mesh mesh,
-		CollisionShape collisionShape
+		Spatial prototype,
+		CollisionShape collisionShape,
+		DieFace[] faces
 	) {}
 
 	private static record DieFace(
-		/* The face's outward unit normal. */
-		Vector3f normal,
 		/* The value on the face. */
-		int value
+		String displayValue,
+		/* The value used for computing the total roll result. */
+		int totalValue,
+		/* The face's outward unit normal. */
+		Vector3f normal
 	) {}
 
 	private static enum CameraView {

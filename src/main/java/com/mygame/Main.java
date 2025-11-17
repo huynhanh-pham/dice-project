@@ -611,6 +611,7 @@ public class Main extends SimpleApplication {
 		this.settleTimer = 0;
 	}
 
+	@SuppressWarnings("unchecked")
 	private void initDieTypes() {
 		final int nDieType = 7;
 
@@ -1258,7 +1259,7 @@ public class Main extends SimpleApplication {
 				oldFace.normal()
 			);
 
-			dPercentFaceCentroidPairs[i] = new Pair(newFace, centroid);
+			dPercentFaceCentroidPairs[i] = new Pair<>(newFace, centroid);
 		}
 		faceCentroidPairArrays[dPercentIdx] = dPercentFaceCentroidPairs;
 

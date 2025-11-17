@@ -9,6 +9,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
+import java.util.function.Function;
+
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -361,7 +363,7 @@ public class Main extends SimpleApplication {
 		String middle = "";
 		if (!this.dieRollResults.isEmpty()) {
 			final int rollTotal = this.dieRollResults.stream()
-				.mapToInt(DieFace::totalValue)
+				.mapToInt(DieFace::numericValue)
 				.sum();
 
 			middle = this.dieRollResults.stream()
@@ -1252,7 +1254,7 @@ public class Main extends SimpleApplication {
 
 			final DieFace newFace = new DieFace(
 				String.format("%s0", oldFace.displayValue()),
-				oldFace.totalValue() * 10,
+				oldFace.numericValue() * 10,
 				oldFace.normal()
 			);
 
@@ -1343,18 +1345,11 @@ public class Main extends SimpleApplication {
 			final Vector3f principleAxis = principleAxes[i];
 			final Pair<DieFace, Vector3f>[] faceCentroidPairs =
 				faceCentroidPairArrays[i];
+			final boolean alwaysUnambiguousValueOrientation =
+				alwaysUnambiguousValueOrientations[i];
 
-			// TODO: special handling for D4's "faces".
-			for (
-				final Pair<DieFace, Vector3f> faceCentroidPair :
-				faceCentroidPairs
-			) {
-				final DieFace face = faceCentroidPair.first();
-				String displayValue = face.displayValue();
-				final Vector3f normal = face.normal();
-				final Vector3f centroid = faceCentroidPair.second();
-
-				if (!alwaysUnambiguousValueOrientations[i]) {
+			final Function<String, Spatial> makeLabel = displayValue -> {
+				if (!alwaysUnambiguousValueOrientation) {
 					/* If displayValue contains only 6's and/or 9's,
 					 * then the face's intended orientation/value
 					 * is ambiguous,
@@ -1370,38 +1365,108 @@ public class Main extends SimpleApplication {
 					}
 				}
 
-				final BitmapText label = new BitmapText(dieLabelFont);
+				final BitmapText labelText = new BitmapText(dieLabelFont);
 
 				final float labelTextSize = 0.5f;
-				label.setSize(labelTextSize);
-				label.setColor(dieLabelColor);
-				label.setText(displayValue);
-
-				final Node labelNode = new Node(
-					String.format("Face %s", displayValue)
-				);
-				labelNode.attachChild(label);
-				label.setLocalTranslation(
-					-label.getLineWidth() / 2,
-					label.getLineHeight() / 2,
+				labelText.setSize(labelTextSize);
+				labelText.setColor(dieLabelColor);
+				labelText.setText(displayValue);
+				labelText.setLocalTranslation(
+					-labelText.getLineWidth() / 2,
+					labelText.getLineHeight() / 2,
 					0
 				);
 
-				final float labelNodeNormalOffset = 1e-4f;
-				final Vector3f labelNodePos =
-					centroid.add(normal.mult(labelNodeNormalOffset));
+				final Node label = new Node(
+					String.format("Face %s", displayValue)
+				);
+				label.attachChild(labelText);
 
-				Vector3f up = principleAxis;
-				if (isParallel(normal, up)) {
-					up = findOrthogonal(up);
+				return label;
+			};
+
+			final float labelNormalOffset = 1e-4f;
+
+			if (i == d4Idx) {
+				for (int j = 0; j < faceCentroidPairs.length; ++j) {
+					final Pair<DieFace, Vector3f> fcp = faceCentroidPairs[j];
+					final DieFace face = fcp.first();
+					final String displayValue = face.displayValue();
+					final Vector3f centroidNormal = face.normal();
+					final Vector3f centroid = fcp.second();
+
+					final Spatial labelPrototype =
+						makeLabel.apply(displayValue);
+					int labelPrototypeCloneCounter =
+						faceCentroidPairs.length - 2;
+
+					/* Place a label near the vertex centroid
+					 * on each adjacent real face of the die. */
+					for (int k = 0; k < faceCentroidPairs.length; ++k) {
+						/* Skip the entry in faceCentroidPairs
+						 * that corresponds to the "face"
+						 * whose labels we are currently placing. */
+						if (k == j) {
+							continue;
+						}
+
+						Spatial label = labelPrototype;
+						if (labelPrototypeCloneCounter > 0) {
+							--labelPrototypeCloneCounter;
+							label = labelPrototype.clone();
+						}
+
+						/* The inward unit normal of the current real face. */
+						final Vector3f inwardNormal =
+							faceCentroidPairs[k].first().normal();
+
+						/* The negative
+						 * of the vector component of centroidNormal
+						 * perpendicular to inwardNormal;
+						 * a tangent vector of the current real face
+						 * pointing directly away from the current vertex. */
+						final Vector3f tangent = centroidNormal
+							.project(inwardNormal)
+							.subtract(centroidNormal);
+
+						final float tangentCoefficient = 0.5f;
+						final Vector3f labelPos = centroid
+							.add(tangent.mult(tangentCoefficient))
+							.subtract(inwardNormal.mult(labelNormalOffset));
+						final Quaternion labelRot =
+							new Quaternion().lookAt(
+								inwardNormal.negate(),
+								centroidNormal
+							);
+						label.setLocalTranslation(labelPos);
+						label.setLocalRotation(labelRot);
+
+						prototype.attachChild(label);
+					}
 				}
-				final Quaternion labelNodeRot =
-					new Quaternion().lookAt(normal, up);
+			} else {
+				for (final Pair<DieFace, Vector3f> fcp : faceCentroidPairs) {
+					final DieFace face = fcp.first();
+					final String displayValue = face.displayValue();
+					final Vector3f normal = face.normal();
+					final Vector3f centroid = fcp.second();
 
-				labelNode.setLocalTranslation(labelNodePos);
-				labelNode.setLocalRotation(labelNodeRot);
+					final Spatial label = makeLabel.apply(displayValue);
 
-				prototype.attachChild(labelNode);
+					Vector3f rotUp = principleAxis;
+					if (isParallel(normal, rotUp)) {
+						rotUp = findOrthogonal(rotUp);
+					}
+
+					final Vector3f labelPos =
+						centroid.add(normal.mult(labelNormalOffset));
+					final Quaternion labelRot =
+						new Quaternion().lookAt(normal, rotUp);
+					label.setLocalTranslation(labelPos);
+					label.setLocalRotation(labelRot);
+
+					prototype.attachChild(label);
+				}
 			}
 		}
 
@@ -1578,8 +1643,9 @@ public class Main extends SimpleApplication {
 	private static record DieFace(
 		/* The value on the face. */
 		String displayValue,
-		/* The value used for computing the total roll result. */
-		int totalValue,
+		/* The numeric value of the face,
+		 * used for computing the total roll result. */
+		int numericValue,
 		/* The face's outward unit normal. */
 		Vector3f normal
 	) {}

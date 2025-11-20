@@ -6,6 +6,7 @@ package com.mygame;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 
@@ -59,14 +60,14 @@ import com.jme3.shadow.SpotLightShadowRenderer;
 import com.jme3.system.AppSettings;
 
 public class Main extends SimpleApplication {
-	private static final float GROUND_SIZE = 20;
-	private static final float DICE_TRAY_WIDTH = 6;
-	private static final float DICE_TRAY_WALL_HEIGHT = 3.5f;
+	private static final float GROUND_SIZE = 100;
+	private static final float DICE_TRAY_WIDTH = 10;
+	private static final float DICE_TRAY_WALL_HEIGHT = 4;
 	private static final float DICE_TRAY_WALL_THICKNESS = 0.2f;
 
-	private static final String DIE_TYPE_NAME_PREFIX = "D";
+	private static final String DICE_GROUP_TYPE_NAME_PREFIX = "D";
 
-	private static final int DIE_COUNT_MAX = 100;
+	private static final int DICE_GROUP_COUNT_MAX = 100;
 
 	private BulletAppState physics;
 	private BitmapText hud;
@@ -74,13 +75,13 @@ public class Main extends SimpleApplication {
 	private InputMode inputMode;
 	private InputErrorStatus inputErrorStatus;
 	private StringBuilder inputBuffer;
-	private DieType[] dieTypes;
-	private DieType currentDieType;
-	/* How many dice to roll. */
-	private int dieCount;
-	private List<Spatial> dice;
-	private List<DieFace> dieRollResults;
-	/* For getting die-roll results in simpleUpdate. */
+	private DiceGroupType[] diceGroupTypes;
+	private DiceGroupType currentDiceGroupType;
+	/* How many dice groups to roll. */
+	private int diceGroupCount;
+	private List<Node> diceGroups;
+	private List<DiceGroupRollResult> diceGroupRollResults;
+	/* For getting dice-group roll results in simpleUpdate. */
 	private float settleTimer;
 
 	public static void main(final String[] args) {
@@ -103,13 +104,13 @@ public class Main extends SimpleApplication {
 		this.setCameraView(CameraView.VERTICAL);
 		this.flyCam.setEnabled(false);
 
-		/* Intializes this.dieTypes and this.currentDieType. */
-		this.initDieTypes();
+		/* Intializes this.diceGroupTypes and this.currentDiceGroupType. */
+		this.initDiceGroupTypes();
 
-		final int dieCountDefault = 1;
-		this.dieCount = dieCountDefault;
-		this.dice = new ArrayList<>();
-		this.dieRollResults = new ArrayList<>();
+		final int diceGroupCountDefault = 1;
+		this.diceGroupCount = diceGroupCountDefault;
+		this.diceGroups = new ArrayList<>();
+		this.diceGroupRollResults = new ArrayList<>();
 
 		this.setupInput();
 		this.setupLights();
@@ -124,17 +125,22 @@ public class Main extends SimpleApplication {
 	}
 
 	private void simpleUpdateImpl(final float tpf) {
-		if (this.dice.isEmpty() || !this.dieRollResults.isEmpty()) {
+		if (
+			this.diceGroups.isEmpty()
+			|| !this.diceGroupRollResults.isEmpty()
+		) {
 			return;
 		}
 
 		float vSum = 0, wSum = 0;
-		for (final Spatial die : this.dice) {
-			final RigidBodyControl dieBody =
-				die.getControl(RigidBodyControl.class);
+		for (final Node diceGroup : this.diceGroups) {
+			for (final Spatial die : diceGroup.getChildren()) {
+				final RigidBodyControl dieBody =
+					die.getControl(RigidBodyControl.class);
 
-			vSum += vectorLengthApprox(dieBody.getLinearVelocity());
-			wSum += vectorLengthApprox(dieBody.getAngularVelocity());
+				vSum += vectorLengthApprox(dieBody.getLinearVelocity());
+				wSum += vectorLengthApprox(dieBody.getAngularVelocity());
+			}
 		}
 
 		final float vwSumCutoff = 0.1f;
@@ -152,13 +158,25 @@ public class Main extends SimpleApplication {
 			return;
 		}
 
-		for (final Spatial die : this.dice) {
-			this.dieRollResults.add(this.readDieFace(die));
+		for (final Node diceGroup : this.diceGroups) {
+			final List<Spatial> dice = diceGroup.getChildren();
+			final DieType[] dieTypes = this.currentDiceGroupType.dieTypes();
+
+			final DieFace[] faces = new DieFace[dice.size()];
+			final Iterator<Spatial> diceIter = dice.iterator();
+			for (int i = 0; i < faces.length; ++i) {
+				final Spatial die = diceIter.next();
+				faces[i] = readDieFace(die, dieTypes[i]);
+			}
+
+			final DiceGroupRollResult rollResult =
+				this.currentDiceGroupType.getRollResultFn().apply(faces);
+			this.diceGroupRollResults.add(rollResult);
 		}
 	}
 
 	private void setupLights() {
-		final Vector3f sunlightDirection = new Vector3f(0.1f, -0.1f, 0.1f);
+		final Vector3f sunlightDirection = new Vector3f(1, -1, 1);
 		final ColorRGBA sunlightColor = ColorRGBA.White;
 
 		final DirectionalLight sunlight = new DirectionalLight();
@@ -173,11 +191,11 @@ public class Main extends SimpleApplication {
 		this.rootNode.addLight(amb);
 
 		final int dlsrShadowMapSize = 1024;
-		final int dlsrSplitCount = 3;
+		final int dlsrSplitCount = 4;
 
 		final DirectionalLightShadowRenderer dlsr =
 			new DirectionalLightShadowRenderer(
-				assetManager,
+				this.assetManager,
 				dlsrShadowMapSize,
 				dlsrSplitCount
 			);
@@ -195,8 +213,6 @@ public class Main extends SimpleApplication {
 			new ColorRGBA(0.90f, 0.92f, 0.95f, 1);
 		final ColorRGBA groundSpecularColor = ColorRGBA.White;
 		final float groundShininess = 8f;
-		final RenderQueue.ShadowMode groundShadowMode =
-			RenderQueue.ShadowMode.Receive;
 
 		final Material groundMat = new Material(
 			this.assetManager,
@@ -214,7 +230,7 @@ public class Main extends SimpleApplication {
 		);
 		ground.rotate(-FastMath.HALF_PI, 0, 0);
 		ground.setLocalTranslation(-GROUND_SIZE / 2, 0, GROUND_SIZE / 2);
-		ground.setShadowMode(groundShadowMode);
+		ground.setShadowMode(RenderQueue.ShadowMode.Receive);
 
 		this.rootNode.attachChild(ground);
 
@@ -341,33 +357,33 @@ public class Main extends SimpleApplication {
 		String pre = switch (this.inputMode) {
 			case InputMode.OFF -> switch (this.inputErrorStatus) {
 				case InputErrorStatus.OK -> "";
-				case InputErrorStatus.INVALID_DIE_TYPE ->
-					"Invalid die type; keeping previous";
-				case InputErrorStatus.INVALID_DIE_COUNT ->
-					"Invalid die count; keeping previous";
-				case InputErrorStatus.TOO_BIG_DIE_COUNT ->
+				case InputErrorStatus.INVALID_DICE_GROUP_TYPE ->
+					"Invalid dice-group type; keeping previous";
+				case InputErrorStatus.INVALID_DICE_GROUP_COUNT ->
+					"Invalid dice-group count; keeping previous";
+				case InputErrorStatus.TOO_BIG_DICE_GROUP_COUNT ->
 					String.format(
-						"Max die count is %d! Using %d",
-						DIE_COUNT_MAX, this.dieCount
+						"Max dice-group count is %d! Using %d",
+						DICE_GROUP_COUNT_MAX, this.diceGroupCount
 					);
 			};
-			case InputMode.DIE_TYPE ->
-				String.format("Enter die type: %s", this.inputBuffer);
-			case InputMode.DIE_COUNT ->
-				String.format("Enter die count: %s", this.inputBuffer);
+			case InputMode.DICE_GROUP_TYPE ->
+				String.format("Enter dice-group type: %s", this.inputBuffer);
+			case InputMode.DICE_GROUP_COUNT ->
+				String.format("Enter dice-group count: %s", this.inputBuffer);
 		};
 		if (!pre.isEmpty()) {
 			pre += System.lineSeparator() + System.lineSeparator();
 		}
 
 		String middle = "";
-		if (!this.dieRollResults.isEmpty()) {
-			final int rollTotal = this.dieRollResults.stream()
-				.mapToInt(DieFace::numericValue)
+		if (!this.diceGroupRollResults.isEmpty()) {
+			final int rollTotal = this.diceGroupRollResults.stream()
+				.mapToInt(DiceGroupRollResult::numericValue)
 				.sum();
 
-			middle = this.dieRollResults.stream()
-				.map(DieFace::displayValue)
+			middle = this.diceGroupRollResults.stream()
+				.map(DiceGroupRollResult::displayValue)
 				.collect(
 					Collectors.joining(
 						" ",
@@ -379,10 +395,10 @@ public class Main extends SimpleApplication {
 
 		final String controlsSep = "  ";
 		final String hudText = String.format(
-			"%sCurrent Die: %s x%d%n%sSPACE=roll%sT=set type%<sN=set count%<sC=camera",
+			"%sCurrent Dice Group: %s x%d%n%sSPACE=roll%sT=type%<sN=count%<sC=camera",
 			pre,
-			this.currentDieType.name(),
-			this.dieCount,
+			this.currentDiceGroupType.name(),
+			this.diceGroupCount,
 			middle,
 			controlsSep
 		);
@@ -403,8 +419,8 @@ public class Main extends SimpleApplication {
 		/* Actions upon key triggers. */
 		final String rollDiceActionName = "ROLL_DICE";
 		final String cycleCameraViewActionName = "CYCLE_CAMERA_VIEW";
-		final String setDieTypeActionName = "SET_DIE_TYPE";
-		final String setDieCountActionName = "SET_DIE_COUNT";
+		final String setDiceGroupTypeActionName = "SET_DICE_GROUP_TYPE";
+		final String setDiceGroupCountActionName = "SET_DICE_GROUP_COUNT";
 		final String confirmInputActionName = "CONFIRM_INPUT";
 
 		/* Digit-action names are of the form "DIGIT"d,
@@ -418,9 +434,9 @@ public class Main extends SimpleApplication {
 		 * we unconditionally interpret
 		 * both the regular and number-pad "5" key
 		 * as "%"
-		 * when setting the die type,
+		 * when setting the dice-group type,
 		 * which should not cause any problems
-		 * since no die type has "5" in its name. */
+		 * since no dice-group type has "5" in its name. */
 		final String percentDigitActionNameAffix = "5";
 
 		final ActionListener actionListener = new ActionListener() {
@@ -447,19 +463,19 @@ public class Main extends SimpleApplication {
 					case InputMode.OFF -> {
 						if (name.equals(rollDiceActionName)) {
 							main.clearDice();
-							for (int i = 0; i < main.dieCount; ++i) {
-								main.createAndRollDie();
+							for (int i = 0; i < main.diceGroupCount; ++i) {
+								main.createAndRollDiceGroup();
 							}
 						} else if (name.equals(cycleCameraViewActionName)) {
 							main.setCameraView(main.cameraView.next());
-						} else if (name.equals(setDieTypeActionName)) {
-							main.inputMode = InputMode.DIE_TYPE;
-							main.inputBuffer.append(DIE_TYPE_NAME_PREFIX);
-						} else if (name.equals(setDieCountActionName)) {
-							main.inputMode = InputMode.DIE_COUNT;
+						} else if (name.equals(setDiceGroupTypeActionName)) {
+							main.inputMode = InputMode.DICE_GROUP_TYPE;
+							main.inputBuffer.append(DICE_GROUP_TYPE_NAME_PREFIX);
+						} else if (name.equals(setDiceGroupCountActionName)) {
+							main.inputMode = InputMode.DICE_GROUP_COUNT;
 						}
 					}
-					case InputMode.DIE_TYPE -> {
+					case InputMode.DICE_GROUP_TYPE -> {
 						if (name.startsWith(digitActionNamePrefix)) {
 							/* DIGIT# -> #. */
 							String ch = name.substring(
@@ -471,24 +487,26 @@ public class Main extends SimpleApplication {
 
 							main.inputBuffer.append(ch);
 						} else if (name.equals(confirmInputActionName)) {
-							final String dieTypeName =
+							final String diceGroupTypeName =
 								main.inputBuffer.toString();
 
-							Arrays.stream(main.dieTypes)
+							Arrays.stream(main.diceGroupTypes)
 								.filter(
-									type -> dieTypeName.equals(type.name())
+									type -> diceGroupTypeName.equals(
+										type.name()
+									)
 								)
 								.findFirst()
 								.ifPresentOrElse(
-									type -> main.currentDieType = type,
+									type -> main.currentDiceGroupType = type,
 									() -> main.inputErrorStatus =
-										InputErrorStatus.INVALID_DIE_TYPE
+										InputErrorStatus.INVALID_DICE_GROUP_TYPE
 								);
 
 							resetInputModeAndBuffer.run();
 						}
 					}
-					case InputMode.DIE_COUNT -> {
+					case InputMode.DICE_GROUP_COUNT -> {
 						if (name.startsWith(digitActionNamePrefix)) {
 							/* DIGIT# -> #. */
 							main.inputBuffer.append(
@@ -510,16 +528,19 @@ public class Main extends SimpleApplication {
 								.filter(count -> count > 0)
 								.ifPresentOrElse(
 									count -> {
-										main.dieCount =
-											Math.min(count, DIE_COUNT_MAX);
+										main.diceGroupCount =
+											Math.min(
+												count,
+												DICE_GROUP_COUNT_MAX
+											);
 
-										if (count > DIE_COUNT_MAX) {
+										if (count > DICE_GROUP_COUNT_MAX) {
 											main.inputErrorStatus =
-												InputErrorStatus.TOO_BIG_DIE_COUNT;
+												InputErrorStatus.TOO_BIG_DICE_GROUP_COUNT;
 										}
 									},
 									() -> main.inputErrorStatus =
-										InputErrorStatus.INVALID_DIE_COUNT
+										InputErrorStatus.INVALID_DICE_GROUP_COUNT
 								);
 
 							resetInputModeAndBuffer.run();
@@ -532,8 +553,8 @@ public class Main extends SimpleApplication {
 		final String[] generalActions = {
 			rollDiceActionName,
 			cycleCameraViewActionName,
-			setDieTypeActionName,
-			setDieCountActionName,
+			setDiceGroupTypeActionName,
+			setDiceGroupCountActionName,
 			confirmInputActionName,
 		};
 		final int[] generalActionKeyCodes = {
@@ -580,15 +601,15 @@ public class Main extends SimpleApplication {
 
 	private static enum InputMode {
 		OFF,
-		DIE_TYPE,
-		DIE_COUNT;
+		DICE_GROUP_TYPE,
+		DICE_GROUP_COUNT;
 	}
 
 	private static enum InputErrorStatus {
 		OK,
-		INVALID_DIE_TYPE,
-		INVALID_DIE_COUNT,
-		TOO_BIG_DIE_COUNT;
+		INVALID_DICE_GROUP_TYPE,
+		INVALID_DICE_GROUP_COUNT,
+		TOO_BIG_DICE_GROUP_COUNT;
 	}
 
 	private void setCameraView(final CameraView cameraView) {
@@ -598,39 +619,41 @@ public class Main extends SimpleApplication {
 	}
 
 	private void clearDice() {
-		for (final Spatial die : this.dice) {
-			final RigidBodyControl dieBody =
-				die.getControl(RigidBodyControl.class);
+		for (final Node diceGroup : this.diceGroups) {
+			for (final Spatial die : diceGroup.getChildren()) {
+				final RigidBodyControl dieBody =
+					die.getControl(RigidBodyControl.class);
+				this.physics.getPhysicsSpace().remove(dieBody);
+			}
 
-			this.physics.getPhysicsSpace().remove(dieBody);
-			this.rootNode.detachChild(die);
+			this.rootNode.detachChild(diceGroup);
 		}
-		this.dice.clear();
 
-		this.dieRollResults.clear();
+		this.diceGroups.clear();
+		this.diceGroupRollResults.clear();
 		this.settleTimer = 0;
 	}
 
 	@SuppressWarnings("unchecked")
-	private void initDieTypes() {
+	private void initDiceGroupTypes() {
 		final int nDieType = 7;
 
-		final int d4Idx = 0;
-		final int d6Idx = 1;
-		final int d8Idx = 2;
-		final int d10Idx = 3;
-		final int dPercentIdx = 4;
-		final int d12Idx = 5;
-		final int d20Idx = 6;
+		final int d4TypeIdx = 0;
+		final int d6TypeIdx = 1;
+		final int d8TypeIdx = 2;
+		final int d10TypeIdx = 3;
+		final int dPercentTypeIdx = 4;
+		final int d12TypeIdx = 5;
+		final int d20TypeIdx = 6;
 
-		final String[] names = new String[nDieType];
-		names[d4Idx] = "D4";
-		names[d6Idx] = "D6";
-		names[d8Idx] = "D8";
-		names[d10Idx] = "D10";
-		names[dPercentIdx] = "D%";
-		names[d12Idx] = "D12";
-		names[d20Idx] = "D20";
+		final String[] typeNames = new String[nDieType];
+		typeNames[d4TypeIdx] = "D4";
+		typeNames[d6TypeIdx] = "D6";
+		typeNames[d8TypeIdx] = "D8";
+		typeNames[d10TypeIdx] = "D10";
+		typeNames[dPercentTypeIdx] = "D%";
+		typeNames[d12TypeIdx] = "D12";
+		typeNames[d20TypeIdx] = "D20";
 
 		final float oneThird = 1f / 3;
 
@@ -666,7 +689,7 @@ public class Main extends SimpleApplication {
 
 		final Pair<DieFace, Vector3f>[][] faceCentroidPairArrays =
 			(Pair<DieFace, Vector3f>[][])new Pair[nDieType][];
-		faceCentroidPairArrays[d4Idx] =
+		faceCentroidPairArrays[d4TypeIdx] =
 			(Pair<DieFace, Vector3f>[])new Pair[] {
 				new Pair<>(
 					new DieFace(
@@ -701,7 +724,7 @@ public class Main extends SimpleApplication {
 					new Vector3f(0, -sqrtOf1Div3, sqrtOf2Div3)
 				),
 			};
-		faceCentroidPairArrays[d6Idx] =
+		faceCentroidPairArrays[d6TypeIdx] =
 			(Pair<DieFace, Vector3f>[])new Pair[] {
 				new Pair<>(
 					new DieFace("1", 1, Vector3f.UNIT_Y),
@@ -728,7 +751,7 @@ public class Main extends SimpleApplication {
 					Vector3f.UNIT_Y.mult(-sqrtOf1Div3)
 				),
 			};
-		faceCentroidPairArrays[d8Idx] =
+		faceCentroidPairArrays[d8TypeIdx] =
 			(Pair<DieFace, Vector3f>[])new Pair[] {
 				new Pair<>(
 					new DieFace(
@@ -795,7 +818,7 @@ public class Main extends SimpleApplication {
 					new Vector3f(-oneThird, -oneThird, oneThird)
 				),
 			};
-		faceCentroidPairArrays[d10Idx] =
+		faceCentroidPairArrays[d10TypeIdx] =
 			(Pair<DieFace, Vector3f>[])new Pair[] {
 				new Pair<>(
 					new DieFace(
@@ -950,7 +973,7 @@ public class Main extends SimpleApplication {
 					)
 				),
 			};
-		faceCentroidPairArrays[d12Idx] =
+		faceCentroidPairArrays[d12TypeIdx] =
 			(Pair<DieFace, Vector3f>[])new Pair[] {
 				new Pair<>(
 					new DieFace(
@@ -1049,7 +1072,7 @@ public class Main extends SimpleApplication {
 					new Vector3f(-d12CentroidConst67, -d12CentroidConst41, 0)
 				),
 			};
-		faceCentroidPairArrays[d20Idx] =
+		faceCentroidPairArrays[d20TypeIdx] =
 			(Pair<DieFace, Vector3f>[])new Pair[] {
 				new Pair<>(
 					new DieFace(
@@ -1246,7 +1269,7 @@ public class Main extends SimpleApplication {
 			};
 
 		final Pair<DieFace, Vector3f>[] dPercentFaceCentroidPairs =
-			faceCentroidPairArrays[d10Idx].clone();
+			faceCentroidPairArrays[d10TypeIdx].clone();
 		for (int i = 0; i < dPercentFaceCentroidPairs.length; ++i) {
 			final Pair<DieFace, Vector3f> oldFaceCentroidPair =
 				dPercentFaceCentroidPairs[i];
@@ -1261,20 +1284,20 @@ public class Main extends SimpleApplication {
 
 			dPercentFaceCentroidPairs[i] = new Pair<>(newFace, centroid);
 		}
-		faceCentroidPairArrays[dPercentIdx] = dPercentFaceCentroidPairs;
+		faceCentroidPairArrays[dPercentTypeIdx] = dPercentFaceCentroidPairs;
 
 		final Vector3f[] principleAxes = new Vector3f[nDieType];
-		principleAxes[d4Idx] =
-			faceCentroidPairArrays[d4Idx][0].first().normal();
-		principleAxes[d6Idx] =
-			faceCentroidPairArrays[d6Idx][0].first().normal();
-		principleAxes[d8Idx] = Vector3f.UNIT_Y;
-		principleAxes[d10Idx] = Vector3f.UNIT_Y;
-		principleAxes[dPercentIdx] = Vector3f.UNIT_Y;
-		principleAxes[d12Idx] =
-			faceCentroidPairArrays[d12Idx][0].first().normal();
-		principleAxes[d20Idx] =
-			faceCentroidPairArrays[d20Idx][0].first().normal();
+		principleAxes[d4TypeIdx] =
+			faceCentroidPairArrays[d4TypeIdx][0].first().normal();
+		principleAxes[d6TypeIdx] =
+			faceCentroidPairArrays[d6TypeIdx][0].first().normal();
+		principleAxes[d8TypeIdx] = Vector3f.UNIT_Y;
+		principleAxes[d10TypeIdx] = Vector3f.UNIT_Y;
+		principleAxes[dPercentTypeIdx] = Vector3f.UNIT_Y;
+		principleAxes[d12TypeIdx] =
+			faceCentroidPairArrays[d12TypeIdx][0].first().normal();
+		principleAxes[d20TypeIdx] =
+			faceCentroidPairArrays[d20TypeIdx][0].first().normal();
 
 		final Spatial[] models = new Spatial[nDieType];
 		final CollisionShape[] collisionShapes =
@@ -1291,11 +1314,11 @@ public class Main extends SimpleApplication {
 
 		for (int i = 0; i < nDieType; ++i) {
 			/* D% uses the same model and collision shape as D10. */
-			if (i == dPercentIdx) {
+			if (i == dPercentTypeIdx) {
 				continue;
 			}
 
-			final String name = names[i];
+			final String name = typeNames[i];
 			final String modelPath =
 				String.format("Models/Dice/%s.obj", name);
 			final Spatial model = this.assetManager.loadModel(modelPath);
@@ -1312,8 +1335,8 @@ public class Main extends SimpleApplication {
 			models[i] = model;
 			collisionShapes[i] = collisionShape;
 		}
-		models[dPercentIdx] = models[d10Idx].clone();
-		collisionShapes[dPercentIdx] = collisionShapes[d10Idx];
+		models[dPercentTypeIdx] = models[d10TypeIdx].clone();
+		collisionShapes[dPercentTypeIdx] = collisionShapes[d10TypeIdx];
 
 		final BitmapFont dieLabelFont =
 			this.assetManager.loadFont("Interface/Fonts/Default.fnt");
@@ -1323,23 +1346,24 @@ public class Main extends SimpleApplication {
 		 * then which is which can be ambiguous. */
 		final boolean[] alwaysUnambiguousValueOrientations =
 			new boolean[nDieType];
-		alwaysUnambiguousValueOrientations[d4Idx] = true;
-		alwaysUnambiguousValueOrientations[d6Idx] = true;
-		alwaysUnambiguousValueOrientations[d8Idx] = true;
-		alwaysUnambiguousValueOrientations[d10Idx] = false;
-		alwaysUnambiguousValueOrientations[dPercentIdx] = false;
-		alwaysUnambiguousValueOrientations[d12Idx] = false;
-		alwaysUnambiguousValueOrientations[d20Idx] = false;
+		alwaysUnambiguousValueOrientations[d4TypeIdx] = true;
+		alwaysUnambiguousValueOrientations[d6TypeIdx] = true;
+		alwaysUnambiguousValueOrientations[d8TypeIdx] = true;
+		alwaysUnambiguousValueOrientations[d10TypeIdx] = false;
+		alwaysUnambiguousValueOrientations[dPercentTypeIdx] = false;
+		alwaysUnambiguousValueOrientations[d12TypeIdx] = false;
+		alwaysUnambiguousValueOrientations[d20TypeIdx] = false;
 
 		final Node[] prototypes = new Node[nDieType];
 		for (int i = 0; i < nDieType; ++i) {
 			final Spatial model = models[i];
 
-			final Node prototype = new Node(names[i]);
+			final Node prototype = new Node(typeNames[i]);
 			prototypes[i] = prototype;
 
 			final float dieScale = 0.5f;
 			prototype.scale(dieScale);
+			collisionShapes[i].setScale(dieScale);
 
 			prototype.attachChild(model);
 
@@ -1388,7 +1412,7 @@ public class Main extends SimpleApplication {
 
 			final float labelNormalOffset = 1e-4f;
 
-			if (i == d4Idx) {
+			if (i == d4TypeIdx) {
 				for (int j = 0; j < faceCentroidPairs.length; ++j) {
 					final Pair<DieFace, Vector3f> fcp = faceCentroidPairs[j];
 					final DieFace face = fcp.first();
@@ -1471,10 +1495,10 @@ public class Main extends SimpleApplication {
 			}
 		}
 
-		this.dieTypes = IntStream.range(0, nDieType)
+		final DieType[] dieTypes = IntStream.range(0, nDieType)
 			.mapToObj(
 				i -> new DieType(
-					names[i],
+					typeNames[i],
 					prototypes[i],
 					collisionShapes[i],
 					Arrays.stream(faceCentroidPairArrays[i])
@@ -1484,82 +1508,172 @@ public class Main extends SimpleApplication {
 			)
 			.toArray(DieType[]::new);
 
-		this.currentDieType = this.dieTypes[d6Idx];
-	}
+		final int nDiceGroupType = 8;
 
-	private void createAndRollDie() {
-		/* Create the die. */
-		final Spatial die = this.currentDieType.prototype().clone();
+		final int d4GroupTypeIdx = 0;
+		final int d6GroupTypeIdx = 1;
+		final int d8GroupTypeIdx = 2;
+		final int d10GroupTypeIdx = 3;
+		final int dPercentGroupTypeIdx = 4;
+		final int d12GroupTypeIdx = 5;
+		final int d20GroupTypeIdx = 6;
+		final int d100GroupTypeIdx = 7;
 
-		final RigidBodyControl dieBody =
-			new RigidBodyControl(this.currentDieType.collisionShape());
-		die.addControl(dieBody);
+		final Function<DieFace[], DiceGroupRollResult> identityRollResult =
+			faces -> {
+				final DieFace face = faces[0];
+				return new DiceGroupRollResult(
+					face.displayValue(),
+					face.numericValue()
+				);
+			};
 
-		this.rootNode.attachChild(die);
-		this.physics.getPhysicsSpace().add(dieBody);
-		this.dice.add(die);
-
-		/* Roll the die,
-		 * by applying a linear and angular impulse to it. */
-
-		/* Randomize the die's initial position and rotation
-		 * and the impulses applied to the die,
-		 * to ensure randomness for the roll. */
-		final float positionXzAbsMax = 1;
-		final float positionY = 1.5f;
-		final Vector3f position = new Vector3f(
-			fastRandomFloatClosed(-positionXzAbsMax, positionXzAbsMax),
-			positionY,
-			fastRandomFloatClosed(-positionXzAbsMax, positionXzAbsMax)
+		this.diceGroupTypes = new DiceGroupType[nDiceGroupType];
+		this.diceGroupTypes[d4GroupTypeIdx] = new DiceGroupType(
+			"D4",
+			new DieType[] { dieTypes[d4TypeIdx] },
+			identityRollResult
 		);
+		this.diceGroupTypes[d6GroupTypeIdx] = new DiceGroupType(
+			"D6",
+			new DieType[] { dieTypes[d6TypeIdx] },
+			identityRollResult
+		);
+		this.diceGroupTypes[d8GroupTypeIdx] = new DiceGroupType(
+			"D8",
+			new DieType[] { dieTypes[d8TypeIdx] },
+			identityRollResult
+		);
+		this.diceGroupTypes[d10GroupTypeIdx] = new DiceGroupType(
+			"D10",
+			new DieType[] { dieTypes[d10TypeIdx] },
+			identityRollResult
+		);
+		this.diceGroupTypes[dPercentGroupTypeIdx] =
+			new DiceGroupType(
+				"D%",
+				new DieType[] { dieTypes[dPercentGroupTypeIdx] },
+				identityRollResult
+			);
+		this.diceGroupTypes[d12GroupTypeIdx] = new DiceGroupType(
+			"D12",
+			new DieType[] { dieTypes[d12TypeIdx] },
+			identityRollResult
+		);
+		this.diceGroupTypes[d20GroupTypeIdx] = new DiceGroupType(
+			"D20",
+			new DieType[] { dieTypes[d20TypeIdx] },
+			identityRollResult
+		);
+		this.diceGroupTypes[d100GroupTypeIdx] = new DiceGroupType(
+			"D100",
+			new DieType[] { dieTypes[d10TypeIdx], dieTypes[dPercentTypeIdx] },
+			faces -> {
+				final DieFace d10Face = faces[0], dPercentFace = faces[1];
 
-		final Quaternion rotation = new Quaternion(
-			/* Tait-Bryan angles. */
-			new float[] {
-				/* Bank: [0, 2 * pi). */
-				fastRandomFloat(0, FastMath.TWO_PI),
-				/* Heading: [0, 2 * pi). */
-				fastRandomFloat(0, FastMath.TWO_PI),
-				/* Elevation: [0, pi). */
-				fastRandomFloat(0, FastMath.PI),
+				final String d10Dv = d10Face.displayValue();
+				final String dPercentDv = dPercentFace.displayValue();
+
+				final String dv =
+					dPercentDv.substring(
+						0,
+						dPercentDv.length() - d10Dv.length()
+					) + d10Dv;
+
+				final int d10Nv = d10Face.numericValue();
+				final int dPercentNv = dPercentFace.numericValue();
+
+				int nv = d10Nv % 10 + dPercentNv % 100;
+				if (nv == 0) {
+					nv = 100;
+				}
+
+				return new DiceGroupRollResult(dv, nv);
 			}
 		);
 
-		final float linearImpulseXzAbsMax = 2;
-		final float linearImpulseY = 6;
-		final Vector3f linearImpulse = new Vector3f(
-			fastRandomFloatClosed(
-				-linearImpulseXzAbsMax,
-				linearImpulseXzAbsMax
-			),
-			linearImpulseY,
-			fastRandomFloatClosed(
-				-linearImpulseXzAbsMax,
-				linearImpulseXzAbsMax
-			)
-		);
+		this.currentDiceGroupType = this.diceGroupTypes[d6GroupTypeIdx];
+	}
 
-		final float angularImpulseXyzAbsMax = 1;
-		final Vector3f angularImpulse = new Vector3f(
-			fastRandomFloatClosed(
-				-angularImpulseXyzAbsMax,
-				angularImpulseXyzAbsMax
-			),
-			fastRandomFloatClosed(
-				-angularImpulseXyzAbsMax,
-				angularImpulseXyzAbsMax
-			),
-			fastRandomFloatClosed(
-				-angularImpulseXyzAbsMax,
-				angularImpulseXyzAbsMax
-			)
-		);
+	private void createAndRollDiceGroup() {
+		final DieType[] dieTypes = this.currentDiceGroupType.dieTypes();
 
-		dieBody.setPhysicsLocation(position);
-		dieBody.setPhysicsRotation(rotation);
+		final Node diceGroup = new Node(this.currentDiceGroupType.name());
+		this.rootNode.attachChild(diceGroup);
+		this.diceGroups.add(diceGroup);
 
-		dieBody.applyImpulse(linearImpulse, Vector3f.ZERO);
-		dieBody.applyTorqueImpulse(angularImpulse);
+		for (final DieType dieType : dieTypes) {
+			/* Create the die. */
+			final Spatial die = dieType.prototype().clone();
+			diceGroup.attachChild(die);
+
+			final RigidBodyControl dieBody =
+				new RigidBodyControl(dieType.collisionShape());
+			die.addControl(dieBody);
+			this.physics.getPhysicsSpace().add(dieBody);
+
+			/* Roll the die,
+			 * by applying a linear and angular impulse to it. */
+
+			/* Randomize the die's initial position and rotation
+			 * and the impulses applied to the die,
+			 * to ensure randomness for the roll. */
+			final float positionXzAbsMax = DICE_TRAY_WIDTH / 4;
+			final float positionY = DICE_TRAY_WALL_HEIGHT / 4;
+			final Vector3f position = new Vector3f(
+				fastRandomFloatClosed(-positionXzAbsMax, positionXzAbsMax),
+				positionY,
+				fastRandomFloatClosed(-positionXzAbsMax, positionXzAbsMax)
+			);
+
+			final Quaternion rotation = new Quaternion(
+				/* Tait-Bryan angles. */
+				new float[] {
+					/* Bank: [0, 2 * pi). */
+					fastRandomFloat(0, FastMath.TWO_PI),
+					/* Heading: [0, 2 * pi). */
+					fastRandomFloat(0, FastMath.TWO_PI),
+					/* Elevation: [0, pi). */
+					fastRandomFloat(0, FastMath.PI),
+				}
+			);
+
+			final float linearImpulseXzAbsMax = 1;
+			final float linearImpulseY = 6;
+			final Vector3f linearImpulse = new Vector3f(
+				fastRandomFloatClosed(
+					-linearImpulseXzAbsMax,
+					linearImpulseXzAbsMax
+				),
+				linearImpulseY,
+				fastRandomFloatClosed(
+					-linearImpulseXzAbsMax,
+					linearImpulseXzAbsMax
+				)
+			);
+
+			final float angularImpulseXyzAbsMax = 1;
+			final Vector3f angularImpulse = new Vector3f(
+				fastRandomFloatClosed(
+					-angularImpulseXyzAbsMax,
+					angularImpulseXyzAbsMax
+				),
+				fastRandomFloatClosed(
+					-angularImpulseXyzAbsMax,
+					angularImpulseXyzAbsMax
+				),
+				fastRandomFloatClosed(
+					-angularImpulseXyzAbsMax,
+					angularImpulseXyzAbsMax
+				)
+			);
+
+			dieBody.setPhysicsLocation(position);
+			dieBody.setPhysicsRotation(rotation);
+
+			dieBody.applyImpulse(linearImpulse, Vector3f.ZERO);
+			dieBody.applyTorqueImpulse(angularImpulse);
+		}
 	}
 
 	private static float vectorLengthApprox(final Vector3f v) {
@@ -1568,7 +1682,10 @@ public class Main extends SimpleApplication {
 			+ Math.abs(v.getZ());
 	}
 
-	private DieFace readDieFace(final Spatial die) {
+	private static DieFace readDieFace(
+		final Spatial die,
+		final DieType dieType
+	) {
 		/* If the "most upward" face of the die is exactly horizontal,
 		 * then its outward unit normal is currently (0, 1, 0).
 		 * Therefore,
@@ -1613,8 +1730,6 @@ public class Main extends SimpleApplication {
 		 * with the result of applying the inverse of the die's rotation
 		 * to (0, 1, 0),
 		 * is greatest. */
-		final DieType dieType = this.currentDieType;
-
 		final RigidBodyControl dieBody =
 			die.getControl(RigidBodyControl.class);
 		final Quaternion rotation = dieBody.getPhysicsRotation();
@@ -1633,6 +1748,17 @@ public class Main extends SimpleApplication {
 
 		return bestFace;
 	}
+
+	private static record DiceGroupType(
+		String name,
+		DieType[] dieTypes,
+		Function<DieFace[], DiceGroupRollResult> getRollResultFn
+	) {}
+
+	private static record DiceGroupRollResult(
+		String displayValue,
+		int numericValue
+	) {}
 
 	private static record DieType(
 		String name,
@@ -1660,7 +1786,7 @@ public class Main extends SimpleApplication {
 			return switch (this) {
 				case VERTICAL -> new Vector3f(
 					0,
-					2 * DICE_TRAY_WALL_HEIGHT + 2,
+					DICE_TRAY_WIDTH + 1.5f * DICE_TRAY_WALL_HEIGHT,
 					0
 				);
 				case DIAGONAL -> new Vector3f(

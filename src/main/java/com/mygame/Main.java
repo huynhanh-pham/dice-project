@@ -4,6 +4,16 @@ package com.mygame;
  * @author thuph
  * @author Jonathan Gruber */
 
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Font;
+
+import java.awt.color.ColorSpace;
+
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -14,6 +24,15 @@ import java.util.function.Function;
 
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JColorChooser;
+import javax.swing.JFrame;
+import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
+
+import javax.swing.colorchooser.AbstractColorChooserPanel;
 
 import com.jme3.app.SimpleApplication;
 
@@ -29,9 +48,11 @@ import com.jme3.font.BitmapFont;
 import com.jme3.font.BitmapText;
 
 import com.jme3.input.KeyInput;
+import com.jme3.input.MouseInput;
 
 import com.jme3.input.controls.ActionListener;
 import com.jme3.input.controls.KeyTrigger;
+import com.jme3.input.controls.MouseButtonTrigger;
 
 import com.jme3.light.AmbientLight;
 import com.jme3.light.DirectionalLight;
@@ -59,23 +80,9 @@ import com.jme3.shadow.SpotLightShadowRenderer;
 
 import com.jme3.system.AppSettings;
 
-
-import javax.swing.*;
-import java.awt.BorderLayout;
-import java.awt.Color;
-import java.awt.Dimension;
-
-
 import com.jme3.system.awt.AwtPanelsContext;
 import com.jme3.system.awt.AwtPanel;
-
-
-import com.jme3.input.MouseInput;
-import com.jme3.input.controls.MouseButtonTrigger;
 import com.jme3.system.awt.PaintMode;
-import java.awt.Font;
-import javax.swing.colorchooser.AbstractColorChooserPanel;
-
 
 public class Main extends SimpleApplication {
 	private static final float GROUND_SIZE = 100;
@@ -84,6 +91,8 @@ public class Main extends SimpleApplication {
 	private static final float DICE_TRAY_WALL_THICKNESS = 0.2f;
 
 	private static final String DICE_GROUP_TYPE_NAME_PREFIX = "D";
+
+	private static final ColorRGBA DIE_COLOR_DEFAULT = ColorRGBA.White;
 
 	private static final int DICE_GROUP_COUNT_MAX = 100;
 
@@ -94,139 +103,26 @@ public class Main extends SimpleApplication {
 	private InputErrorStatus inputErrorStatus;
 	private StringBuilder inputBuffer;
 	private DiceGroupType[] diceGroupTypes;
+	private Material dieMaterial;
 	private DiceGroupType currentDiceGroupType;
 	/* How many dice groups to roll. */
 	private int diceGroupCount;
 	private List<Node> diceGroups;
 	private List<DiceGroupRollResult> diceGroupRollResults;
 	/* For getting dice-group roll results in simpleUpdate. */
-	private float settleTimer; 
-        
-        private Material dieMaterial;
-        private ColorRGBA currentDieColor = ColorRGBA.White.clone();
-        private AwtPanel awtPanel; // for Swing integration
+	private float settleTimer;
 
-
-	/*public static void main(final String[] args) {
+	public static void main(final String[] args) {
 		final AppSettings settings = new AppSettings(true);
-		final String windowTitle = "Dice-Rolling Simulator";
-		settings.setTitle(windowTitle);
-		settings.setResizable(true);
+		/* Use AwtPanelsContext so that jME renders to Swing. */
+		settings.setCustomRenderer(AwtPanelsContext.class);
 
 		final Main app = new Main();
 		app.setSettings(settings);
 		app.setShowSettings(false);
+		/* jME will create an AwtPanelsContext, so no default window. */
 		app.start();
-	}*/
-        
-        public static void main(final String[] args) {
-            final AppSettings settings = new AppSettings(true);
-            final String windowTitle = "Dice-Rolling Simulator";
-            settings.setTitle(windowTitle);
-            settings.setResizable(true);
-            settings.setResolution(2000, 1000);
-
-            // Important: use AwtPanelsContext so jME renders to Swing
-            settings.setCustomRenderer(AwtPanelsContext.class);
-            settings.setFrameRate(60);
-
-            final Main app = new Main();
-            app.setSettings(settings);
-            app.setShowSettings(false);
-            app.start();  // jME will create an AwtPanelsContext, no default window
-        }
-
-        private void initSwingUi() {
-            AwtPanelsContext ctx = (AwtPanelsContext) this.getContext();
-
-            this.awtPanel = ctx.createPanel(PaintMode.Accelerated);
-            this.awtPanel.setPreferredSize(new Dimension(900, 600));
-
-            ctx.setInputSource(this.awtPanel);
-
-            this.awtPanel.attachTo(true, this.viewPort);
-            this.awtPanel.attachTo(false, this.guiViewPort);
-
-            SwingUtilities.invokeLater(() -> {
-                JFrame frame = new JFrame("Dice-Rolling Simulator");
-                frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-                frame.setLayout(new BorderLayout());
-                JPanel topContainer = new JPanel(new BorderLayout());
-                JPanel controlBar = new JPanel(new BorderLayout());
-                JButton toggleButton = new JButton("Color Picker ▼");
-                toggleButton.setFocusPainted(false);
-                toggleButton.setBorderPainted(false);
-                toggleButton.setContentAreaFilled(false);
-                toggleButton.setOpaque(true);
-
-                toggleButton.setBackground(new Color(230, 230, 230));
-                toggleButton.setForeground(Color.DARK_GRAY);
-                toggleButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-                toggleButton.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
-                
-                toggleButton.addMouseListener(new java.awt.event.MouseAdapter() {
-                    public void mouseEntered(java.awt.event.MouseEvent evt) {
-                        toggleButton.setBackground(new Color(210, 210, 210));
-                    }
-                    public void mouseExited(java.awt.event.MouseEvent evt) {
-                        toggleButton.setBackground(new Color(230, 230, 230));
-                    }
-                });
-
-                controlBar.add(toggleButton, BorderLayout.WEST);
-
-                 JPanel chooserWrapper = new JPanel(new BorderLayout());
-                
-                
-                JColorChooser colorChooser = new JColorChooser(Color.WHITE);
-
-                for (AbstractColorChooserPanel panel : colorChooser.getChooserPanels()) {
-                    String name = panel.getDisplayName();
-                    if (!"HSV".equals(name)) {
-                        colorChooser.removeChooserPanel(panel);
-                    }
-                }
-
-               colorChooser.setPreviewPanel(new JPanel());
-
-                chooserWrapper.add(colorChooser, BorderLayout.CENTER);
-
-                chooserWrapper.setVisible(false);
-
-                toggleButton.addActionListener(e -> {
-                    boolean nowVisible = !chooserWrapper.isVisible();
-                    chooserWrapper.setVisible(nowVisible);
-                    toggleButton.setText(nowVisible ? "Color Picker ▲" : "Color Picker ▼");
-                    frame.revalidate();
-                    frame.repaint();
-                });
-                
-                colorChooser.getSelectionModel().addChangeListener(e -> {
-                    Color awtColor = colorChooser.getColor();
-                    final ColorRGBA jmeColor = new ColorRGBA(
-                        awtColor.getRed() / 255f,
-                        awtColor.getGreen() / 255f,
-                        awtColor.getBlue() / 255f,
-                        1f
-                    );
-
-                    this.enqueue(() -> {
-                        setDiceColor(jmeColor);
-                        return null;
-                    });
-                });
-
-                topContainer.add(controlBar, BorderLayout.NORTH);
-                topContainer.add(chooserWrapper, BorderLayout.CENTER);
-
-                frame.add(topContainer, BorderLayout.NORTH);
-                frame.add(this.awtPanel, BorderLayout.CENTER);
-
-                frame.pack();
-                frame.setLocationRelativeTo(null);
-                frame.setVisible(true);
-            });
-        }
+	}
 
 	@Override
 	public void simpleInitApp() {
@@ -237,7 +133,7 @@ public class Main extends SimpleApplication {
 		this.flyCam.setEnabled(false);
 
 		/* Intializes this.diceGroupTypes and this.currentDiceGroupType. */
-		this.initDiceGroupTypes();
+		this.setupDiceGroupTypes();
 
 		final int diceGroupCountDefault = 1;
 		this.diceGroupCount = diceGroupCountDefault;
@@ -248,14 +144,12 @@ public class Main extends SimpleApplication {
 		this.setupLights();
 		this.setupDiceTray();
 		this.setupHUD();
-                this.initSwingUi();
-
+		this.setupSwingUi();
 	}
 
 	@Override
 	public void simpleUpdate(final float tpf) {
 		this.simpleUpdateImpl(tpf);
-                this.updateHudSize();
 		this.updateHud();
 	}
 
@@ -308,248 +202,6 @@ public class Main extends SimpleApplication {
 				this.currentDiceGroupType.getRollResultFn().apply(faces);
 			this.diceGroupRollResults.add(rollResult);
 		}
-	}
-
-	private void setupLights() {
-		final Vector3f sunlightDirection = new Vector3f(1, -1, 1);
-		final ColorRGBA sunlightColor = ColorRGBA.White;
-
-		final DirectionalLight sunlight = new DirectionalLight();
-		sunlight.setDirection(sunlightDirection);
-		sunlight.setColor(sunlightColor);
-		this.rootNode.addLight(sunlight);
-
-		final ColorRGBA ambientLightColor = ColorRGBA.White;
-
-		final AmbientLight amb = new AmbientLight();
-		amb.setColor(ambientLightColor);
-		this.rootNode.addLight(amb);
-
-		final int dlsrShadowMapSize = 1024;
-		final int dlsrSplitCount = 4;
-
-		final DirectionalLightShadowRenderer dlsr =
-			new DirectionalLightShadowRenderer(
-				this.assetManager,
-				dlsrShadowMapSize,
-				dlsrSplitCount
-			);
-		dlsr.setLight(sunlight);
-		this.viewPort.addProcessor(dlsr);
-	}
-
-	private void setupDiceTray() {
-		this.setupGround();
-		this.setupWalls();
-	}
-
-	private void setupGround() {
-		final ColorRGBA groundDiffuseColor =
-			new ColorRGBA(0.90f, 0.92f, 0.95f, 1);
-		final ColorRGBA groundSpecularColor = ColorRGBA.White;
-		final float groundShininess = 8f;
-
-		final Material groundMat = new Material(
-			this.assetManager,
-			"Common/MatDefs/Light/Lighting.j3md"
-		);
-		groundMat.setBoolean("UseMaterialColors", true);
-		groundMat.setColor("Diffuse", groundDiffuseColor);
-		groundMat.setColor("Specular", groundSpecularColor);
-		groundMat.setFloat("Shininess", groundShininess);
-
-		final Geometry ground = new Geometry(
-			"ground",
-			new Quad(GROUND_SIZE, GROUND_SIZE),
-			groundMat
-		);
-		ground.rotate(-FastMath.HALF_PI, 0, 0);
-		ground.setLocalTranslation(-GROUND_SIZE / 2, 0, GROUND_SIZE / 2);
-		ground.setShadowMode(RenderQueue.ShadowMode.Receive);
-
-		this.rootNode.attachChild(ground);
-
-		final RigidBodyControl groundBody = new RigidBodyControl(0f);
-		ground.addControl(groundBody);
-		this.physics.getPhysicsSpace().add(groundBody);
-	}
-
-	private void setupWalls() {
-		final ColorRGBA wallDiffuseColor = new ColorRGBA(1, 1, 1, 0.5f);
-		final ColorRGBA wallSpecularColor = new ColorRGBA(0, 0, 0, 0.5f);
-		final float wallShininess = 16f;
-
-		final Material wallMat = new Material(
-			this.assetManager,
-			"Common/MatDefs/Light/Lighting.j3md"
-		);
-		wallMat.setBoolean("UseMaterialColors", true);
-		wallMat.setColor("Diffuse", wallDiffuseColor);
-		wallMat.setColor("Specular", wallSpecularColor);
-		wallMat.setTransparent(true);
-		wallMat.setFloat("Shininess", wallShininess);
-
-		final Vector3f[] wallPositions = {
-			/* Near wall. */
-			new Vector3f(
-				0, DICE_TRAY_WALL_HEIGHT / 2, DICE_TRAY_WIDTH / 2
-			),
-			/* Far wall. */
-			new Vector3f(
-				0, DICE_TRAY_WALL_HEIGHT / 2, -DICE_TRAY_WIDTH / 2
-			),
-			/* Right wall. */
-			new Vector3f(
-				DICE_TRAY_WIDTH / 2, DICE_TRAY_WALL_HEIGHT / 2, 0
-			),
-			/* Left wall. */
-			new Vector3f(
-				-DICE_TRAY_WIDTH / 2, DICE_TRAY_WALL_HEIGHT / 2, 0
-			),
-		};
-
-		/* Each element: [x, y, z] */
-		final float[][] wallDimensions = {
-			/* Near wall. */
-			{
-				DICE_TRAY_WIDTH,
-				DICE_TRAY_WALL_HEIGHT,
-				DICE_TRAY_WALL_THICKNESS,
-			},
-			/* Far wall. */
-			{
-				DICE_TRAY_WIDTH,
-				DICE_TRAY_WALL_HEIGHT,
-				DICE_TRAY_WALL_THICKNESS,
-			},
-			/* Right wall. */
-			{
-				DICE_TRAY_WALL_THICKNESS,
-				DICE_TRAY_WALL_HEIGHT,
-				DICE_TRAY_WIDTH,
-			},
-			/* Left wall. */
-			{
-				DICE_TRAY_WALL_THICKNESS,
-				DICE_TRAY_WALL_HEIGHT,
-				DICE_TRAY_WIDTH,
-			},
-		};
-
-		for (int i = 0; i < wallPositions.length; ++i) {
-			final Vector3f position = wallPositions[i];
-			final float[] wallDim = wallDimensions[i];
-			final float xSize = wallDim[0];
-			final float ySize = wallDim[1];
-			final float zSize = wallDim[2];
-
-			this.addWall(position, xSize, ySize, zSize, wallMat);
-		}
-	}
-
-	private void addWall(
-		final Vector3f pos,
-		final float xSize,
-		final float ySize,
-		final float zSize,
-		final Material mat
-	) {
-		final Geometry wall = new Geometry(
-			"wall",
-			new Box(xSize / 2f, ySize / 2f, zSize / 2f),
-			mat
-		);
-		wall.setLocalTranslation(pos);
-		wall.setShadowMode(RenderQueue.ShadowMode.Receive);
-		this.rootNode.attachChild(wall);
-
-		RigidBodyControl wallBody = new RigidBodyControl(0f);
-		wall.addControl(wallBody);
-		this.physics.getPhysicsSpace().add(wallBody);
-	}
-
-	private void setupHUD() {
-		this.setDisplayStatView(false); 
-		this.setDisplayFps(false);
-
-		this.guiNode.detachAllChildren();
-
-		final float hudTextSize = 24;
-		final ColorRGBA hudTextColor = ColorRGBA.Brown;
-
-		this.guiFont =
-			this.assetManager.loadFont("Interface/Fonts/Default.fnt");
-		this.hud = new BitmapText(guiFont);
-		this.hud.setSize(hudTextSize);
-		this.hud.setColor(hudTextColor);
-
-		this.guiNode.attachChild(this.hud);
-
-                this.updateHudSize();
-		this.updateHud();
-	}
-
-        private void updateHudSize() {
-            float scale = this.cam.getHeight() / 720f;
-            this.hud.setSize(24f * scale);
-        }
-        
-	private void updateHud() {
-		String pre = switch (this.inputMode) {
-			case InputMode.OFF -> switch (this.inputErrorStatus) {
-				case InputErrorStatus.OK -> "";
-				case InputErrorStatus.INVALID_DICE_GROUP_TYPE ->
-					"Invalid dice-group type; keeping previous";
-				case InputErrorStatus.INVALID_DICE_GROUP_COUNT ->
-					"Invalid dice-group count; keeping previous";
-				case InputErrorStatus.TOO_BIG_DICE_GROUP_COUNT ->
-					String.format(
-						"Max dice-group count is %d! Using %d",
-						DICE_GROUP_COUNT_MAX, this.diceGroupCount
-					);
-			};
-			case InputMode.DICE_GROUP_TYPE ->
-				String.format("Enter dice-group type: %s", this.inputBuffer);
-			case InputMode.DICE_GROUP_COUNT ->
-				String.format("Enter dice-group count: %s", this.inputBuffer);
-		};
-		if (!pre.isEmpty()) {
-			pre += System.lineSeparator() + System.lineSeparator();
-		}
-
-		String middle = "";
-		if (!this.diceGroupRollResults.isEmpty()) {
-			final int rollTotal = this.diceGroupRollResults.stream()
-				.mapToInt(DiceGroupRollResult::numericValue)
-				.sum();
-
-			middle = this.diceGroupRollResults.stream()
-				.map(DiceGroupRollResult::displayValue)
-				.collect(
-					Collectors.joining(
-						" ",
-						"Rolled: ",
-						String.format("%nTotal: %d%n", rollTotal)
-					)
-				);
-		}
-
-		final String controlsSep = "  ";
-		final String hudText = String.format(
-			"%sCurrent Dice Group: %s x%d%n%sSPACE=roll%sT=type%<sN=count%<sC=camera",
-			pre,
-			this.currentDiceGroupType.name(),
-			this.diceGroupCount,
-			middle,
-			controlsSep
-		);
-
-		this.hud.setLocalTranslation(this.computeHudPosition());
-		this.hud.setText(hudText);
-	}
-
-	private Vector3f computeHudPosition() {
-		return new Vector3f(0, this.cam.getHeight(), 0);
 	}
 
 	private void setupInput() {
@@ -753,6 +405,367 @@ public class Main extends SimpleApplication {
 		TOO_BIG_DICE_GROUP_COUNT;
 	}
 
+	private void setupLights() {
+		final Vector3f sunlightDirection = new Vector3f(1, -1, 1);
+		final ColorRGBA sunlightColor = ColorRGBA.White;
+
+		final DirectionalLight sunlight = new DirectionalLight();
+		sunlight.setDirection(sunlightDirection);
+		sunlight.setColor(sunlightColor);
+		this.rootNode.addLight(sunlight);
+
+		final ColorRGBA ambientLightColor = ColorRGBA.White;
+
+		final AmbientLight amb = new AmbientLight();
+		amb.setColor(ambientLightColor);
+		this.rootNode.addLight(amb);
+
+		final int dlsrShadowMapSize = 1024;
+		final int dlsrSplitCount = 4;
+
+		final DirectionalLightShadowRenderer dlsr =
+			new DirectionalLightShadowRenderer(
+				this.assetManager,
+				dlsrShadowMapSize,
+				dlsrSplitCount
+			);
+		dlsr.setLight(sunlight);
+		this.viewPort.addProcessor(dlsr);
+	}
+
+	private void setupDiceTray() {
+		this.setupGround();
+		this.setupWalls();
+	}
+
+	private void setupGround() {
+		final ColorRGBA groundDiffuseColor =
+			new ColorRGBA(0.90f, 0.92f, 0.95f, 1);
+		final ColorRGBA groundSpecularColor = ColorRGBA.White;
+		final float groundShininess = 8f;
+
+		final Material groundMat = new Material(
+			this.assetManager,
+			"Common/MatDefs/Light/Lighting.j3md"
+		);
+		groundMat.setBoolean("UseMaterialColors", true);
+		groundMat.setColor("Diffuse", groundDiffuseColor);
+		groundMat.setColor("Specular", groundSpecularColor);
+		groundMat.setFloat("Shininess", groundShininess);
+
+		final Geometry ground = new Geometry(
+			"ground",
+			new Quad(GROUND_SIZE, GROUND_SIZE),
+			groundMat
+		);
+		ground.rotate(-FastMath.HALF_PI, 0, 0);
+		ground.setLocalTranslation(-GROUND_SIZE / 2, 0, GROUND_SIZE / 2);
+		ground.setShadowMode(RenderQueue.ShadowMode.Receive);
+
+		this.rootNode.attachChild(ground);
+
+		final RigidBodyControl groundBody = new RigidBodyControl(0f);
+		ground.addControl(groundBody);
+		this.physics.getPhysicsSpace().add(groundBody);
+	}
+
+	private void setupWalls() {
+		final ColorRGBA wallDiffuseColor = new ColorRGBA(1, 1, 1, 0.5f);
+		final ColorRGBA wallSpecularColor = new ColorRGBA(0, 0, 0, 0.5f);
+		final float wallShininess = 16f;
+
+		final Material wallMat = new Material(
+			this.assetManager,
+			"Common/MatDefs/Light/Lighting.j3md"
+		);
+		wallMat.setBoolean("UseMaterialColors", true);
+		wallMat.setColor("Diffuse", wallDiffuseColor);
+		wallMat.setColor("Specular", wallSpecularColor);
+		wallMat.setTransparent(true);
+		wallMat.setFloat("Shininess", wallShininess);
+
+		final Vector3f[] wallPositions = {
+			/* Near wall. */
+			new Vector3f(
+				0, DICE_TRAY_WALL_HEIGHT / 2, DICE_TRAY_WIDTH / 2
+			),
+			/* Far wall. */
+			new Vector3f(
+				0, DICE_TRAY_WALL_HEIGHT / 2, -DICE_TRAY_WIDTH / 2
+			),
+			/* Right wall. */
+			new Vector3f(
+				DICE_TRAY_WIDTH / 2, DICE_TRAY_WALL_HEIGHT / 2, 0
+			),
+			/* Left wall. */
+			new Vector3f(
+				-DICE_TRAY_WIDTH / 2, DICE_TRAY_WALL_HEIGHT / 2, 0
+			),
+		};
+
+		/* Each element: [x, y, z] */
+		final float[][] wallDimensions = {
+			/* Near wall. */
+			{
+				DICE_TRAY_WIDTH,
+				DICE_TRAY_WALL_HEIGHT,
+				DICE_TRAY_WALL_THICKNESS,
+			},
+			/* Far wall. */
+			{
+				DICE_TRAY_WIDTH,
+				DICE_TRAY_WALL_HEIGHT,
+				DICE_TRAY_WALL_THICKNESS,
+			},
+			/* Right wall. */
+			{
+				DICE_TRAY_WALL_THICKNESS,
+				DICE_TRAY_WALL_HEIGHT,
+				DICE_TRAY_WIDTH,
+			},
+			/* Left wall. */
+			{
+				DICE_TRAY_WALL_THICKNESS,
+				DICE_TRAY_WALL_HEIGHT,
+				DICE_TRAY_WIDTH,
+			},
+		};
+
+		for (int i = 0; i < wallPositions.length; ++i) {
+			final Vector3f position = wallPositions[i];
+			final float[] wallDim = wallDimensions[i];
+			final float xSize = wallDim[0];
+			final float ySize = wallDim[1];
+			final float zSize = wallDim[2];
+
+			this.addWall(position, xSize, ySize, zSize, wallMat);
+		}
+	}
+
+	private void addWall(
+		final Vector3f pos,
+		final float xSize,
+		final float ySize,
+		final float zSize,
+		final Material mat
+	) {
+		final Geometry wall = new Geometry(
+			"wall",
+			new Box(xSize / 2, ySize / 2, zSize / 2),
+			mat
+		);
+		wall.setLocalTranslation(pos);
+		wall.setShadowMode(RenderQueue.ShadowMode.Receive);
+		this.rootNode.attachChild(wall);
+
+		final RigidBodyControl wallBody = new RigidBodyControl(0);
+		wall.addControl(wallBody);
+		this.physics.getPhysicsSpace().add(wallBody);
+	}
+
+	private void setupHUD() {
+		this.setDisplayStatView(false);
+		this.setDisplayFps(false);
+
+		this.guiNode.detachAllChildren();
+
+		final ColorRGBA hudTextColor = ColorRGBA.Brown;
+
+		this.guiFont = this.assetManager.loadFont(
+			"Interface/Fonts/Default.fnt"
+		);
+		this.hud = new BitmapText(guiFont);
+		this.hud.setColor(hudTextColor);
+
+		this.guiNode.attachChild(this.hud);
+		this.updateHud();
+	}
+
+	private void updateHud() {
+		final float hudTextSizeScaleCoeff = 0.001f;
+		final float scale = this.cam.getHeight() * hudTextSizeScaleCoeff;
+		final float hudTextSizeBase = 24;
+		this.hud.setSize(hudTextSizeBase * scale);
+
+		String pre = switch (this.inputMode) {
+			case InputMode.OFF -> switch (this.inputErrorStatus) {
+				case InputErrorStatus.OK -> "";
+				case InputErrorStatus.INVALID_DICE_GROUP_TYPE ->
+					"Invalid dice-group type; keeping previous";
+				case InputErrorStatus.INVALID_DICE_GROUP_COUNT ->
+					"Invalid dice-group count; keeping previous";
+				case InputErrorStatus.TOO_BIG_DICE_GROUP_COUNT ->
+					String.format(
+						"Max dice-group count is %d! Using %d",
+						DICE_GROUP_COUNT_MAX, this.diceGroupCount
+					);
+			};
+			case InputMode.DICE_GROUP_TYPE ->
+				String.format("Enter dice-group type: %s", this.inputBuffer);
+			case InputMode.DICE_GROUP_COUNT ->
+				String.format("Enter dice-group count: %s", this.inputBuffer);
+		};
+		if (!pre.isEmpty()) {
+			pre += System.lineSeparator() + System.lineSeparator();
+		}
+
+		String middle = "";
+		if (!this.diceGroupRollResults.isEmpty()) {
+			final int rollTotal = this.diceGroupRollResults.stream()
+				.mapToInt(DiceGroupRollResult::numericValue)
+				.sum();
+
+			middle = this.diceGroupRollResults.stream()
+				.map(DiceGroupRollResult::displayValue)
+				.collect(
+					Collectors.joining(
+						" ",
+						"Rolled: ",
+						String.format("%nTotal: %d%n", rollTotal)
+					)
+				);
+		}
+
+		final String controlsSep = "  ";
+		final String hudText = String.format(
+			"%sCurrent Dice Group: %s x%d%n%sSPACE=roll%sT=type%<sN=count%<sC=camera",
+			pre,
+			this.currentDiceGroupType.name(),
+			this.diceGroupCount,
+			middle,
+			controlsSep
+		);
+
+		this.hud.setLocalTranslation(this.computeHudPosition());
+		this.hud.setText(hudText);
+	}
+
+	private Vector3f computeHudPosition() {
+		return new Vector3f(0, this.cam.getHeight(), 0);
+	}
+
+	private void setupSwingUi() {
+		final AwtPanelsContext ctx = (AwtPanelsContext)this.getContext();
+
+		final AwtPanel awtPanel = ctx.createPanel(PaintMode.Accelerated);
+		final Dimension awtPanelPreferredSize = new Dimension(900, 600);
+		awtPanel.setPreferredSize(awtPanelPreferredSize);
+
+		ctx.setInputSource(awtPanel);
+		awtPanel.attachTo(true, this.viewPort);
+		awtPanel.attachTo(false, this.guiViewPort);
+
+		SwingUtilities.invokeLater(() -> {
+			final String windowTitle = "Dice-Rolling Simulator";
+			final JFrame frame = new JFrame(windowTitle);
+			frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+			frame.setLayout(new BorderLayout());
+
+			final String colorPickerToggleButtonClosedText =
+				"Color Picker ▼";
+			final String colorPickerToggleButtonOpenText =
+				"Color Picker ▲";
+			final JButton colorPickerToggleButton =
+				new JButton(colorPickerToggleButtonClosedText);
+			colorPickerToggleButton.setFocusPainted(false);
+			colorPickerToggleButton.setBorderPainted(false);
+			colorPickerToggleButton.setContentAreaFilled(false);
+			colorPickerToggleButton.setOpaque(true);
+
+			final Color colorPickerToggleButtonBackgroundColor =
+				new Color(230, 230, 230);
+			final Color colorPickerToggleButtonForegroundColor =
+				Color.DARK_GRAY;
+			colorPickerToggleButton.setBackground(
+				colorPickerToggleButtonBackgroundColor
+			);
+			colorPickerToggleButton.setForeground(
+				colorPickerToggleButtonForegroundColor
+			);
+
+			final int colorPickerToggleButtonFontSize = 14;
+			final Font colorPickerToggleButtonFont = new Font(
+				Font.SANS_SERIF,
+				Font.PLAIN,
+				colorPickerToggleButtonFontSize
+			);
+			colorPickerToggleButton.setFont(colorPickerToggleButtonFont);
+
+			final int colorPickerToggleButtonBorderWidth = 5;
+			final int colorPickerToggleButtonBorderHeight = 10;
+			colorPickerToggleButton.setBorder(
+				BorderFactory.createEmptyBorder(
+					colorPickerToggleButtonBorderWidth,
+					colorPickerToggleButtonBorderHeight,
+					colorPickerToggleButtonBorderWidth,
+					colorPickerToggleButtonBorderHeight
+				)
+			);
+
+			colorPickerToggleButton.addMouseListener(new MouseAdapter() {
+				public void mouseEntered(final MouseEvent evt) {
+					final Color mouseEnteredBackgroundColor =
+						new Color(210, 210, 210);
+					colorPickerToggleButton.setBackground(
+						mouseEnteredBackgroundColor
+					);
+				}
+
+				public void mouseExited(final MouseEvent evt) {
+					colorPickerToggleButton.setBackground(
+						colorPickerToggleButtonBackgroundColor
+					);
+				}
+			});
+
+			final JColorChooser colorChooser =
+				new JColorChooser(colorJmeToAwt(DIE_COLOR_DEFAULT));
+			colorChooser.setPreviewPanel(new JPanel());
+			colorChooser.getSelectionModel().addChangeListener(e -> {
+				final Color awtColor = colorChooser.getColor();
+				final ColorRGBA jmeColor = colorAwtToJme(awtColor);
+
+				this.enqueue(() -> this.setDieColor(jmeColor));
+			});
+
+			final JPanel colorChooserPanel = new JPanel(new BorderLayout());
+			colorChooserPanel.add(colorChooser, BorderLayout.CENTER);
+			/* The color chooser is closed initially. */
+			colorChooserPanel.setVisible(false);
+
+			colorPickerToggleButton.addActionListener(e -> {
+				/* Toggle openness/closedness. */
+				final boolean nowOpen = !colorChooserPanel.isVisible();
+				colorChooserPanel.setVisible(nowOpen);
+
+				final String label = nowOpen
+					? colorPickerToggleButtonOpenText
+					: colorPickerToggleButtonClosedText;
+				colorPickerToggleButton.setText(label);
+
+				frame.revalidate();
+				frame.repaint();
+			});
+
+			final JPanel controlBar = new JPanel(new BorderLayout());
+			controlBar.add(colorPickerToggleButton, BorderLayout.WEST);
+
+			final JPanel topContainer = new JPanel(new BorderLayout());
+			topContainer.add(controlBar, BorderLayout.NORTH);
+			topContainer.add(colorChooserPanel, BorderLayout.CENTER);
+
+			frame.add(topContainer, BorderLayout.NORTH);
+			frame.add(awtPanel, BorderLayout.CENTER);
+
+			/* Without this statement,
+			 * then the window has size zero, essentially. */
+			frame.pack();
+			/* Center the window on the screen. */
+			frame.setLocationRelativeTo(null);
+			frame.setVisible(true);
+		});
+	}
+
 	private void setCameraView(final CameraView cameraView) {
 		this.cameraView = cameraView;
 		this.cam.setLocation(this.cameraView.position());
@@ -776,7 +789,7 @@ public class Main extends SimpleApplication {
 	}
 
 	@SuppressWarnings("unchecked")
-	private void initDiceGroupTypes() {
+	private void setupDiceGroupTypes() {
 		final int nDieType = 7;
 
 		final int d4TypeIdx = 0;
@@ -1444,23 +1457,12 @@ public class Main extends SimpleApplication {
 		final CollisionShape[] collisionShapes =
 			new CollisionShape[nDieType];
 
-		/*final Material dieMat = new Material(
+		this.dieMaterial = new Material(
 			this.assetManager,
 			"Common/MatDefs/Light/Lighting.j3md"
 		);
-		dieMat.setBoolean("UseMaterialColors", true);
-		final ColorRGBA dieColor = ColorRGBA.Yellow;
-		dieMat.setColor("Ambient", dieColor);
-		dieMat.setColor("Diffuse", dieColor);
-*/
-                
-                this.dieMaterial = new Material(
-                    this.assetManager,
-                    "Common/MatDefs/Light/Lighting.j3md"
-                );
-                this.dieMaterial.setBoolean("UseMaterialColors", true);
-                this.dieMaterial.setColor("Ambient", this.currentDieColor);
-                this.dieMaterial.setColor("Diffuse", this.currentDieColor);
+		this.dieMaterial.setBoolean("UseMaterialColors", true);
+		this.setDieColor(DIE_COLOR_DEFAULT);
 
 		for (int i = 0; i < nDieType; ++i) {
 			/* D% uses the same model and collision shape as D10. */
@@ -1486,7 +1488,7 @@ public class Main extends SimpleApplication {
 			collisionShapes[i] = collisionShape;
 		}
 		models[dPercentTypeIdx] = models[d10TypeIdx].clone();
-                models[dPercentTypeIdx].setMaterial(this.dieMaterial);
+				models[dPercentTypeIdx].setMaterial(this.dieMaterial);
 		collisionShapes[dPercentTypeIdx] = collisionShapes[d10TypeIdx];
 
 		final BitmapFont dieLabelFont =
@@ -1746,18 +1748,11 @@ public class Main extends SimpleApplication {
 		this.currentDiceGroupType = this.diceGroupTypes[d6GroupTypeIdx];
 	}
 
-        private void setDiceColor(ColorRGBA color) {
-            if (color == null) {
-                return;
-            }
-            this.currentDieColor = color.clone();
-            if (this.dieMaterial != null) {
-                this.dieMaterial.setColor("Ambient", this.currentDieColor);
-                this.dieMaterial.setColor("Diffuse", this.currentDieColor);
-            }
-        }
+	private void setDieColor(final ColorRGBA color) {
+		this.dieMaterial.setColor("Ambient", color);
+		this.dieMaterial.setColor("Diffuse", color);
+	}
 
-        
 	private void createAndRollDiceGroup() {
 		final DieType[] dieTypes = this.currentDiceGroupType.dieTypes();
 
@@ -2052,14 +2047,34 @@ public class Main extends SimpleApplication {
 
 		for (final Vector3f b : crossOperands) {
 			final Vector3f c = a.cross(b);
-
-			for (int i = 0; i < 3; ++i) {
-				if (c.get(i) != 0) {
-					return c;
-				}
+			if (!c.isSimilar(Vector3f.ZERO, 0)) {
+				return c;
 			}
 		}
 
 		return Vector3f.ZERO;
+	}
+
+	private static ColorRGBA colorAwtToJme(final Color x) {
+		final ColorSpace colorSpace = ColorSpace.getInstance(
+			ColorSpace.CS_sRGB
+		);
+		final float[] rgba = x.getComponents(colorSpace, null);
+		final float r = rgba[0];
+		final float g = rgba[1];
+		final float b = rgba[2];
+		final float a = rgba[3];
+		/* jME colors are in the Linear color space by default. */
+		return new ColorRGBA().setAsSrgb(r, g, b, a);
+	}
+
+	private static Color colorJmeToAwt(final ColorRGBA x) {
+		/* jME colors are in the Linear color space by default. */
+		final float[] rgba = x.getAsSrgb().getColorArray();
+		final float r = rgba[0];
+		final float g = rgba[1];
+		final float b = rgba[2];
+		final float a = rgba[3];
+		return new Color(r, g, b, a);
 	}
 }

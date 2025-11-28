@@ -59,6 +59,24 @@ import com.jme3.shadow.SpotLightShadowRenderer;
 
 import com.jme3.system.AppSettings;
 
+
+import javax.swing.*;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+
+
+import com.jme3.system.awt.AwtPanelsContext;
+import com.jme3.system.awt.AwtPanel;
+
+
+import com.jme3.input.MouseInput;
+import com.jme3.input.controls.MouseButtonTrigger;
+import com.jme3.system.awt.PaintMode;
+import java.awt.Font;
+import javax.swing.colorchooser.AbstractColorChooserPanel;
+
+
 public class Main extends SimpleApplication {
 	private static final float GROUND_SIZE = 100;
 	private static final float DICE_TRAY_WIDTH = 10;
@@ -82,9 +100,14 @@ public class Main extends SimpleApplication {
 	private List<Node> diceGroups;
 	private List<DiceGroupRollResult> diceGroupRollResults;
 	/* For getting dice-group roll results in simpleUpdate. */
-	private float settleTimer;
+	private float settleTimer; 
+        
+        private Material dieMaterial;
+        private ColorRGBA currentDieColor = ColorRGBA.White.clone();
+        private AwtPanel awtPanel; // for Swing integration
 
-	public static void main(final String[] args) {
+
+	/*public static void main(final String[] args) {
 		final AppSettings settings = new AppSettings(true);
 		final String windowTitle = "Dice-Rolling Simulator";
 		settings.setTitle(windowTitle);
@@ -94,7 +117,116 @@ public class Main extends SimpleApplication {
 		app.setSettings(settings);
 		app.setShowSettings(false);
 		app.start();
-	}
+	}*/
+        
+        public static void main(final String[] args) {
+            final AppSettings settings = new AppSettings(true);
+            final String windowTitle = "Dice-Rolling Simulator";
+            settings.setTitle(windowTitle);
+            settings.setResizable(true);
+            settings.setResolution(2000, 1000);
+
+            // Important: use AwtPanelsContext so jME renders to Swing
+            settings.setCustomRenderer(AwtPanelsContext.class);
+            settings.setFrameRate(60);
+
+            final Main app = new Main();
+            app.setSettings(settings);
+            app.setShowSettings(false);
+            app.start();  // jME will create an AwtPanelsContext, no default window
+        }
+
+        private void initSwingUi() {
+            AwtPanelsContext ctx = (AwtPanelsContext) this.getContext();
+
+            this.awtPanel = ctx.createPanel(PaintMode.Accelerated);
+            this.awtPanel.setPreferredSize(new Dimension(900, 600));
+
+            ctx.setInputSource(this.awtPanel);
+
+            this.awtPanel.attachTo(true, this.viewPort);
+            this.awtPanel.attachTo(false, this.guiViewPort);
+
+            SwingUtilities.invokeLater(() -> {
+                JFrame frame = new JFrame("Dice-Rolling Simulator");
+                frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+                frame.setLayout(new BorderLayout());
+                JPanel topContainer = new JPanel(new BorderLayout());
+                JPanel controlBar = new JPanel(new BorderLayout());
+                JButton toggleButton = new JButton("Color Picker ▼");
+                toggleButton.setFocusPainted(false);
+                toggleButton.setBorderPainted(false);
+                toggleButton.setContentAreaFilled(false);
+                toggleButton.setOpaque(true);
+
+                toggleButton.setBackground(new Color(230, 230, 230));
+                toggleButton.setForeground(Color.DARK_GRAY);
+                toggleButton.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+                toggleButton.setBorder(BorderFactory.createEmptyBorder(5, 10, 5, 10));
+                
+                toggleButton.addMouseListener(new java.awt.event.MouseAdapter() {
+                    public void mouseEntered(java.awt.event.MouseEvent evt) {
+                        toggleButton.setBackground(new Color(210, 210, 210));
+                    }
+                    public void mouseExited(java.awt.event.MouseEvent evt) {
+                        toggleButton.setBackground(new Color(230, 230, 230));
+                    }
+                });
+
+                controlBar.add(toggleButton, BorderLayout.WEST);
+
+                 JPanel chooserWrapper = new JPanel(new BorderLayout());
+                
+                
+                JColorChooser colorChooser = new JColorChooser(Color.WHITE);
+
+                for (AbstractColorChooserPanel panel : colorChooser.getChooserPanels()) {
+                    String name = panel.getDisplayName();
+                    if (!"HSV".equals(name)) {
+                        colorChooser.removeChooserPanel(panel);
+                    }
+                }
+
+               colorChooser.setPreviewPanel(new JPanel());
+
+                chooserWrapper.add(colorChooser, BorderLayout.CENTER);
+
+                chooserWrapper.setVisible(false);
+
+                toggleButton.addActionListener(e -> {
+                    boolean nowVisible = !chooserWrapper.isVisible();
+                    chooserWrapper.setVisible(nowVisible);
+                    toggleButton.setText(nowVisible ? "Color Picker ▲" : "Color Picker ▼");
+                    frame.revalidate();
+                    frame.repaint();
+                });
+                
+                colorChooser.getSelectionModel().addChangeListener(e -> {
+                    Color awtColor = colorChooser.getColor();
+                    final ColorRGBA jmeColor = new ColorRGBA(
+                        awtColor.getRed() / 255f,
+                        awtColor.getGreen() / 255f,
+                        awtColor.getBlue() / 255f,
+                        1f
+                    );
+
+                    this.enqueue(() -> {
+                        setDiceColor(jmeColor);
+                        return null;
+                    });
+                });
+
+                topContainer.add(controlBar, BorderLayout.NORTH);
+                topContainer.add(chooserWrapper, BorderLayout.CENTER);
+
+                frame.add(topContainer, BorderLayout.NORTH);
+                frame.add(this.awtPanel, BorderLayout.CENTER);
+
+                frame.pack();
+                frame.setLocationRelativeTo(null);
+                frame.setVisible(true);
+            });
+        }
 
 	@Override
 	public void simpleInitApp() {
@@ -116,11 +248,14 @@ public class Main extends SimpleApplication {
 		this.setupLights();
 		this.setupDiceTray();
 		this.setupHUD();
+                this.initSwingUi();
+
 	}
 
 	@Override
 	public void simpleUpdate(final float tpf) {
 		this.simpleUpdateImpl(tpf);
+                this.updateHudSize();
 		this.updateHud();
 	}
 
@@ -350,9 +485,15 @@ public class Main extends SimpleApplication {
 
 		this.guiNode.attachChild(this.hud);
 
+                this.updateHudSize();
 		this.updateHud();
 	}
 
+        private void updateHudSize() {
+            float scale = this.cam.getHeight() / 720f;
+            this.hud.setSize(24f * scale);
+        }
+        
 	private void updateHud() {
 		String pre = switch (this.inputMode) {
 			case InputMode.OFF -> switch (this.inputErrorStatus) {
@@ -1303,7 +1444,7 @@ public class Main extends SimpleApplication {
 		final CollisionShape[] collisionShapes =
 			new CollisionShape[nDieType];
 
-		final Material dieMat = new Material(
+		/*final Material dieMat = new Material(
 			this.assetManager,
 			"Common/MatDefs/Light/Lighting.j3md"
 		);
@@ -1311,6 +1452,15 @@ public class Main extends SimpleApplication {
 		final ColorRGBA dieColor = ColorRGBA.Yellow;
 		dieMat.setColor("Ambient", dieColor);
 		dieMat.setColor("Diffuse", dieColor);
+*/
+                
+                this.dieMaterial = new Material(
+                    this.assetManager,
+                    "Common/MatDefs/Light/Lighting.j3md"
+                );
+                this.dieMaterial.setBoolean("UseMaterialColors", true);
+                this.dieMaterial.setColor("Ambient", this.currentDieColor);
+                this.dieMaterial.setColor("Diffuse", this.currentDieColor);
 
 		for (int i = 0; i < nDieType; ++i) {
 			/* D% uses the same model and collision shape as D10. */
@@ -1323,7 +1473,7 @@ public class Main extends SimpleApplication {
 				String.format("Models/Dice/%s.obj", name);
 			final Spatial model = this.assetManager.loadModel(modelPath);
 
-			model.setMaterial(dieMat);
+			model.setMaterial(this.dieMaterial);
 
 			final RenderQueue.ShadowMode dieShadowMode =
 				RenderQueue.ShadowMode.CastAndReceive;
@@ -1336,6 +1486,7 @@ public class Main extends SimpleApplication {
 			collisionShapes[i] = collisionShape;
 		}
 		models[dPercentTypeIdx] = models[d10TypeIdx].clone();
+                models[dPercentTypeIdx].setMaterial(this.dieMaterial);
 		collisionShapes[dPercentTypeIdx] = collisionShapes[d10TypeIdx];
 
 		final BitmapFont dieLabelFont =
@@ -1595,6 +1746,18 @@ public class Main extends SimpleApplication {
 		this.currentDiceGroupType = this.diceGroupTypes[d6GroupTypeIdx];
 	}
 
+        private void setDiceColor(ColorRGBA color) {
+            if (color == null) {
+                return;
+            }
+            this.currentDieColor = color.clone();
+            if (this.dieMaterial != null) {
+                this.dieMaterial.setColor("Ambient", this.currentDieColor);
+                this.dieMaterial.setColor("Diffuse", this.currentDieColor);
+            }
+        }
+
+        
 	private void createAndRollDiceGroup() {
 		final DieType[] dieTypes = this.currentDiceGroupType.dieTypes();
 

@@ -635,7 +635,7 @@ public class Main extends SimpleApplication {
 
 		final String controlsSep = "  ";
 		final String hudText = String.format(
-			"%sCurrent Dice Group: %s x%d%n%sSPACE=roll%sT=type%<sN=count%<sC=camera",
+			"%sCurrent Dice Group: %s x %d%n%sSPACE=roll%sT=type%<sN=count%<sC=camera",
 			pre,
 			this.currentDiceGroupType.name(),
 			this.diceGroupCount,

@@ -215,6 +215,7 @@ public class Main extends SimpleApplication {
 		final String setDiceGroupTypeActionName = "SET_DICE_GROUP_TYPE";
 		final String setDiceGroupCountActionName = "SET_DICE_GROUP_COUNT";
 		final String confirmInputActionName = "CONFIRM_INPUT";
+		final String cancelInputActionName = "CANCEL_INPUT";
 
 		/* Digit-action names are of the form "DIGIT"d,
 		 * where d is a decimal digit. */
@@ -297,6 +298,8 @@ public class Main extends SimpleApplication {
 								);
 
 							resetInputModeAndBuffer.run();
+						} else if (name.equals(cancelInputActionName)) {
+							resetInputModeAndBuffer.run();
 						}
 					}
 					case InputMode.DICE_GROUP_COUNT -> {
@@ -337,6 +340,8 @@ public class Main extends SimpleApplication {
 								);
 
 							resetInputModeAndBuffer.run();
+						} else if (name.equals(cancelInputActionName)) {
+							resetInputModeAndBuffer.run();
 						}
 					}
 				}
@@ -349,6 +354,7 @@ public class Main extends SimpleApplication {
 			setDiceGroupTypeActionName,
 			setDiceGroupCountActionName,
 			confirmInputActionName,
+			cancelInputActionName,
 		};
 		final int[] generalActionKeyCodes = {
 			KeyInput.KEY_SPACE,
@@ -356,6 +362,7 @@ public class Main extends SimpleApplication {
 			KeyInput.KEY_T,
 			KeyInput.KEY_N,
 			KeyInput.KEY_RETURN,
+			KeyInput.KEY_ESCAPE,
 		};
 
 		for (int i = 0; i < generalActions.length; ++i) {
@@ -601,9 +608,9 @@ public class Main extends SimpleApplication {
 					);
 			};
 			case InputMode.DICE_GROUP_TYPE ->
-				String.format("Enter dice-group type: %s", this.inputBuffer);
+				String.format("Enter dice-group type (ESC=cancel): %s", this.inputBuffer);
 			case InputMode.DICE_GROUP_COUNT ->
-				String.format("Enter dice-group count: %s", this.inputBuffer);
+				String.format("Enter dice-group count (ESC=cancel): %s", this.inputBuffer);
 		};
 		if (!pre.isEmpty()) {
 			pre += System.lineSeparator() + System.lineSeparator();
@@ -1634,6 +1641,16 @@ public class Main extends SimpleApplication {
 					Vector3f rotUp = principleAxis;
 					if (isParallel(normal, rotUp)) {
 						rotUp = findOrthogonal(rotUp);
+					}
+					/* Ensure that rotUp and normal do not point
+					 * in directions that are somewhat opposite
+					 * to one another.
+					 * This ensures that the label is oriented
+					 * such that the top of the text
+					 * is oriented
+					 * towards the principal axis of the die. */
+					if (rotUp.dot(normal) < 0) {
+						rotUp = rotUp.negate();
 					}
 
 					final Vector3f labelPos =

@@ -1844,8 +1844,8 @@ public class Main extends SimpleApplication {
 		final Spatial die,
 		final DieType dieType
 	) {
-		/* If the "most upward" face of the die is exactly horizontal,
-		 * then its outward unit normal is currently (0, 1, 0).
+		/* If the "most upward" face of the die were exactly horizontal,
+		 * then its outward unit normal would currently be (0, 1, 0).
 		 * Therefore,
 		 * (0, 1, 0) then must be the result of applying the die's rotation
 		 * to the original outward unit normal
@@ -1856,7 +1856,7 @@ public class Main extends SimpleApplication {
 		 *
 		 * Of course,
 		 * the "most upward" face of the die
-		 * is unlikely to be exactly horizontal,
+		 * may not be exactly horizontal,
 		 * so we determine which face is "most upward"
 		 * by determining which original outward unit normal
 		 * of any of the faces
@@ -1883,7 +1883,7 @@ public class Main extends SimpleApplication {
 		 * Therefore,
 		 * we determine which face is "most upward"
 		 * by determining for which face
-		 * the product,
+		 * the dot product,
 		 * of its original outward unit normal
 		 * with the result of applying the inverse of the die's rotation
 		 * to (0, 1, 0),

@@ -76,6 +76,7 @@ import com.jme3.scene.shape.Box;
 import com.jme3.scene.shape.Quad;
 
 import com.jme3.shadow.DirectionalLightShadowRenderer;
+import com.jme3.shadow.EdgeFilteringMode;
 import com.jme3.shadow.SpotLightShadowRenderer;
 
 import com.jme3.system.AppSettings;
@@ -427,7 +428,7 @@ public class Main extends SimpleApplication {
 		amb.setColor(ambientLightColor);
 		this.rootNode.addLight(amb);
 
-		final int dlsrShadowMapSize = 1024;
+		final int dlsrShadowMapSize = 2048;
 		final int dlsrSplitCount = 4;
 
 		final DirectionalLightShadowRenderer dlsr =
@@ -437,6 +438,9 @@ public class Main extends SimpleApplication {
 				dlsrSplitCount
 			);
 		dlsr.setLight(sunlight);
+                dlsr.setEdgeFilteringMode(EdgeFilteringMode.PCFPOISSON);
+                dlsr.setShadowIntensity(0.4f);   
+                dlsr.setEnabledStabilization(true);
 		this.viewPort.addProcessor(dlsr);
 	}
 

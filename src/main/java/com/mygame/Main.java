@@ -56,7 +56,6 @@ import com.jme3.input.controls.MouseButtonTrigger;
 
 import com.jme3.light.AmbientLight;
 import com.jme3.light.DirectionalLight;
-import com.jme3.light.PointLight;
 import com.jme3.light.SpotLight;
 
 import com.jme3.material.Material;
@@ -430,6 +429,9 @@ public class Main extends SimpleApplication {
 
 		final int dlsrShadowMapSize = 2048;
 		final int dlsrSplitCount = 4;
+		final EdgeFilteringMode dlsrEdgeFilteringMode =
+			EdgeFilteringMode.PCFPOISSON;
+		final float dlsrShadowIntensity = 0.4f;
 
 		final DirectionalLightShadowRenderer dlsr =
 			new DirectionalLightShadowRenderer(
@@ -438,9 +440,9 @@ public class Main extends SimpleApplication {
 				dlsrSplitCount
 			);
 		dlsr.setLight(sunlight);
-                dlsr.setEdgeFilteringMode(EdgeFilteringMode.PCFPOISSON);
-                dlsr.setShadowIntensity(0.4f);   
-                dlsr.setEnabledStabilization(true);
+		dlsr.setEdgeFilteringMode(dlsrEdgeFilteringMode);
+		dlsr.setShadowIntensity(dlsrShadowIntensity);
+		dlsr.setEnabledStabilization(true);
 		this.viewPort.addProcessor(dlsr);
 	}
 
